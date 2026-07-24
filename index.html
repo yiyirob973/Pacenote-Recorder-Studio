@@ -1,0 +1,2504 @@
+<!DOCTYPE html>
+<!--
+
+PACENOTE RECORDER STUDIO - ARCHITECTURE & FUNCTION INDEX
+Version: 3.0.4
+
+APP OVERVIEW:
+A browser-based audio engineering suite for the RBR Pacenote Plugin.
+Handles microphone input, procedural script generation, silence trimming,
+peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
+
+1. GLOBAL STATE
+
+* capturedAudioBuffers: In-memory PCM data.
+* audioQualityFlags: QA telemetry for each token.
+* currentWorkflowMode: UI state (scripting vs. matrix).
+
+2. SCRIPT ENGINE
+
+* generateRequiredSoundScripts(): Builds 20-word reading scripts.
+* generateSpecialCallScripts(): Builds impact/countdown scripts.
+
+3. UI & RENDERING
+
+* renderTokenMatrixGrid(): Draws the token table with state colors.
+* attachWordUsageHover(): Binds interaction for tooltips/waveforms.
+
+4. AUDIO ACQUISITION
+
+* initAudioContext(): Manages hardware/mic permissions.
+* engageAcquisitionCycle(): Handles recording flow.
+
+5. PROCESSING & NORMALIZATION
+
+* normalizeSessionVolumes(): Normalizes all buffers to target peaks.
+* trimSingleBuffer(): Removes silence via RMS analysis.
+* sliceScriptBufferBlocks(): Slices recorded clips into individual tokens.
+
+6. DSP & PLAYBACK
+
+* toggleDSPPlaybackState(): Toggles radio-effect filter graph.
+* playSingleTokenAudio(): Routes audio through DSP or clean output.
+
+7. DATA & STORAGE
+
+* saveStudioSessionToStorage(): Persists to IndexedDB.
+* loadStudioSessionFromStorage(): Restores from IndexedDB.
+
+8. FILE I/O
+
+* exportStructuredZip(): Generates the final project ZIP.
+* exportProjectBackup(): Exports raw data/metadata.
+
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0c0c0e; color: #e2e8f0; margin: 20px; line-height: 1.5; }
+        h1, h2, h3, h4 { color: #fff; margin-top: 0; border-bottom: 1px solid #2d3748; padding-bottom: 8px; }
+        
+        .script-arrow {    color: #4a5568;   font-weight: bold;  margin: 0 4px;user-select: none; }
+
+        .grid-container { display: grid; grid-template-columns: 1fr 400px; gap: 20px; }
+        .panel { background: #1a202c; padding: 20px; border-radius: 8px; border: 1px solid #2d3748; margin-bottom: 20px; }
+        .control-group { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap; }
+        .settings-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        
+        .recording-box { background: #111625; border: 2px dashed #4a5568; border-radius: 6px; padding: 14px; text-align: center; margin-bottom: 15px; position: relative; }
+        .recording-box.active { border-color: #e53e3e; background: #2a1215; }
+
+        .script-meta-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+        .script-progress-label { color: #a0aec0; font-size: 0.78rem; font-family: monospace; }
+        .script-context-label { color: #a0aec0; font-style: italic; font-size: 0.78rem; text-align: right; flex: 1; }
+
+        .token-stage { position: relative; }
+        .countdown-overlay { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10,14,23,0.6); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border-radius: 4px; z-index: 5; }
+        .countdown-overlay.active { display: flex; }
+        .countdown { font-size: 2.4rem; font-weight: bold; color: #ecc94b; font-family: monospace; text-shadow: 0 2px 10px rgba(0,0,0,0.7); }
+        
+        .token-display { font-size: 1.4rem; font-weight: bold; color: #fff; margin: 0; background: #2d3748; padding: 10px 12px; border-radius: 4px; letter-spacing: 0.5px; min-height: 38px; line-height: 1.35; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; }
+        .script-span { padding: 2px 8px 2px 16px; border-radius: 4px; transition: all 0.3s ease; background: transparent; color: #cbd5e0; position: relative; }
+        .script-span.extracted { background: #22543d; color: #48bb78; border: 1px solid #2f855a; text-shadow: 0 0 8px rgba(72,187,120,0.4); cursor: pointer; }
+        .script-span.extracted:hover { background: #276749; box-shadow: 0 0 0 2px rgba(72,187,120,0.5); }
+        .script-span.rerecord-armed { background: #7b341e !important; color: #fbd38d !important; border: 1px dashed #ecc94b !important; animation: armedPulse 1s infinite; }
+        .script-span.now-playing { background: #2b6cb0 !important; color: #ebf8ff !important; border: 1px solid #63b3ed !important; transform: scale(1.08); box-shadow: 0 0 14px rgba(99,179,237,0.85); }
+        @keyframes armedPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(236,201,75,0.6); } 50% { box-shadow: 0 0 0 6px rgba(236,201,75,0); } }
+
+        .script-span::before { content: ''; position: absolute; top: 50%; left: 4px; width: 7px; height: 7px; border-radius: 50%; transform: translateY(-50%); background: transparent; }
+        .script-span.severity-urgent::before { background: #f56565; box-shadow: 0 0 5px rgba(245,101,101,0.9); }
+        .script-span.severity-elevated::before { background: #ed8936; box-shadow: 0 0 5px rgba(237,137,54,0.9); }
+        .script-span.severity-firm::before { background: #ecc94b; box-shadow: 0 0 5px rgba(236,201,75,0.9); }
+        .script-span.severity-warm::before { background: #48bb78; box-shadow: 0 0 5px rgba(72,187,120,0.9); }
+        .script-span.severity-neutral::before { background: #4a5568; }
+
+        .severity-legend { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; font-size: 0.7rem; color: #a0aec0; margin-bottom: 6px; }
+        .severity-legend .legend-item { display: flex; align-items: center; gap: 4px; }
+        .severity-legend .legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+        .severity-legend .legend-dot.severity-urgent { background: #f56565; box-shadow: 0 0 4px rgba(245,101,101,0.8); }
+        .severity-legend .legend-dot.severity-elevated { background: #ed8936; box-shadow: 0 0 4px rgba(237,137,54,0.8); }
+        .severity-legend .legend-dot.severity-firm { background: #ecc94b; box-shadow: 0 0 4px rgba(236,201,75,0.8); }
+        .severity-legend .legend-dot.severity-warm { background: #48bb78; box-shadow: 0 0 4px rgba(72,187,120,0.8); }
+        .severity-legend .legend-dot.severity-neutral { background: #4a5568; }
+
+        .word-usage-tooltip { display: none; position: fixed; max-width: 300px; background: #1a202c; border: 1px solid #4a5568; border-radius: 6px; padding: 10px 12px; font-size: 0.8rem; line-height: 1.5; color: #cbd5e0; box-shadow: 0 6px 20px rgba(0,0,0,0.5); z-index: 999; pointer-events: none; text-align: left; }
+        .word-usage-tooltip.visible { display: block; }
+        .word-usage-tooltip .usage-title { color: #ecc94b; font-weight: bold; font-size: 0.9rem; margin-bottom: 6px; }
+        .word-usage-tooltip .usage-howto { color: #90cdf4; background: rgba(66,153,225,0.12); border-left: 3px solid #4299e1; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px; }
+        .word-usage-tooltip .usage-howto.severity-urgent { border-left-color: #f56565; background: rgba(245,101,101,0.12); }
+        .word-usage-tooltip .usage-howto.severity-elevated { border-left-color: #ed8936; background: rgba(237,137,54,0.12); }
+        .word-usage-tooltip .usage-howto.severity-firm { border-left-color: #ecc94b; background: rgba(236,201,75,0.12); }
+        .word-usage-tooltip .usage-howto.severity-warm { border-left-color: #48bb78; background: rgba(72,187,120,0.12); }
+        .word-usage-tooltip .usage-howto.severity-neutral { border-left-color: #4a5568; background: rgba(74,85,104,0.12); }
+        .word-usage-tooltip .usage-howto-label { display: block; color: #4299e1; font-weight: bold; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+        .word-usage-tooltip .usage-definition { color: #a0aec0; font-size: 0.76rem; }
+        .word-usage-tooltip .usage-def-label { display: block; color: #718096; font-weight: bold; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+        .word-usage-tooltip .usage-definition strong { color: #68d391; text-transform: capitalize; }
+        .word-usage-tooltip .usage-quality { font-size: 0.74rem; padding: 4px 0; font-weight: bold; }
+        .word-usage-tooltip .usage-quality.quality-bad { color: #fc8181; }
+        .word-usage-tooltip .usage-quality.quality-ok { color: #68d391; }
+        .word-usage-tooltip .usage-waveform { display: block; width: 100%; height: 40px; margin: 4px 0 8px; border-radius: 3px; }
+
+        .beat-bar { display: flex; gap: 8px; justify-content: center; align-items: center; height: 20px; margin: 4px 0 2px; }
+        .beat-dot { width: 12px; height: 12px; border-radius: 50%; background: #2d3748; opacity: 0.5; transform: scale(0.8); }
+        .beat-bar.beat-active .beat-dot { animation: beatPulse var(--beat-duration, 0.5s) ease-in-out infinite; animation-play-state: running; }
+        .beat-bar:not(.beat-active) .beat-dot { animation: none; }
+        .beat-bar.beat-active .beat-dot:nth-child(1) { animation-delay: 0s; }
+        .beat-bar.beat-active .beat-dot:nth-child(2) { animation-delay: calc(var(--beat-duration, 0.5s) * 0.25); }
+        .beat-bar.beat-active .beat-dot:nth-child(3) { animation-delay: calc(var(--beat-duration, 0.5s) * 0.5); }
+        .beat-bar.beat-active .beat-dot:nth-child(4) { animation-delay: calc(var(--beat-duration, 0.5s) * 0.75); }
+        @keyframes beatPulse {
+            0%, 100% { transform: scale(0.8); background: #2d3748; opacity: 0.5; box-shadow: none; }
+            18% { transform: scale(1.35); background: #48bb78; opacity: 1; box-shadow: 0 0 10px rgba(72,187,120,0.8); }
+            45% { transform: scale(0.8); background: #2d3748; opacity: 0.5; box-shadow: none; }
+        }
+        label { font-size: 0.9rem; color: #a0aec0; display: block; margin-bottom: 4px; }
+        input[type="range"], input[type="number"], input[type="text"], select { width: 100%; background: #2d3748; border: 1px solid #4a5568; color: #fff; padding: 8px; border-radius: 4px; box-sizing: border-box; font-family: inherit; font-size: 0.95rem; transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+        input[type="text"]:focus, input[type="number"]:focus, select:focus { outline: none; border-color: #3182ce; box-shadow: 0 0 0 2px rgba(49,130,206,0.35); }
+        input[type="text"]::placeholder { color: #718096; }
+        
+        .tab-bar { display: flex; gap: 4px; border-bottom: 2px solid #2d3748; margin-bottom: 15px; }
+        .tab { background: #2d3748; padding: 8px 16px; border-radius: 4px 4px 0 0; cursor: pointer; font-weight: bold; color: #a0aec0; }
+        .tab.active { background: #3182ce; color: #fff; }
+
+        .matrix-container { max-height: 350px; overflow-y: auto; background: #111625; border: 1px solid #2d3748; border-radius: 4px; padding: 10px; }
+        .matrix-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
+        .matrix-item { display: flex; justify-content: space-between; align-items: center; background: #2d3748; padding: 6px 10px; border-radius: 4px; font-size: 0.75rem; font-family: monospace; cursor: pointer; }
+        .matrix-item:hover { background: #4a5568; }
+        .matrix-item.recorded { background: #234e52; border-left: 4px solid #319795; color: #e6fffa; }
+        .matrix-item.active-target { background: #7b341e; border: 1px solid #dd6b20; }
+        .matrix-item-impact { border-left: 4px solid #dd6b20; }
+        .matrix-item-impact.recorded { background: #4a2f10; border-left: 4px solid #dd6b20; color: #fbd38d; }
+        .matrix-item-damage { border-left: 4px solid #b83280; }
+        .matrix-item-damage.recorded { background: #44182f; border-left: 4px solid #b83280; color: #fbb6ce; }
+        .matrix-item-bonusword { border-left: 4px solid #d69e2e; }
+        .matrix-item-bonusword.recorded { background: #4a3c0f; border-left: 4px solid #d69e2e; color: #faf089; }
+        .matrix-item.quality-warning { outline: 2px solid #f56565; outline-offset: -2px; animation: qualityPulse 2s infinite; }
+        @keyframes qualityPulse { 0%, 100% { outline-color: #f56565; } 50% { outline-color: rgba(245,101,101,0.3); } }
+        
+        button { background: #3182ce; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s; box-sizing: border-box; }
+        button:hover { background: #2b6cb0; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.rec-btn { background: #e53e3e; }
+        button.rec-btn:hover { background: #c53030; }
+        button.stop-btn { background: #718096; }
+        button.stop-btn:hover { background: #4a5568; }
+        button.next-btn { background: #48bb78; color: #fff; }
+        button.next-btn:hover { background: #38a169; }
+        button.next-btn:disabled { background: #2d3748; color: #718096; cursor: not-allowed; opacity: 0.7; }
+        button.next-btn:disabled:hover { background: #2d3748; }
+        button.action-btn { background: #319795; }
+        button.action-btn:hover { background: #2c7a7b; }
+        button.danger-btn { background: #e53e3e; }
+        button.danger-btn:hover { background: #9b2c2c; }
+        .upload-btn { background: #805ad5; color: #fff; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; text-align: center; transition: background 0.2s; display: inline-block; border: none; box-sizing: border-box; }
+        
+        .progress-container { background: #2d3748; border-radius: 4px; height: 20px; overflow: hidden; position: relative; }
+        .progress-bar { background: #319795; width: 0%; height: 100%; transition: width 0.3s; }
+        .progress-text { position: absolute; width: 100%; text-align: center; top: 0; font-size: 0.8rem; font-weight: bold; line-height: 20px; color: #fff; }
+        
+        .log-output { background: #000; font-family: monospace; font-size: 0.8rem; color: #48bb78; padding: 10px; border-radius: 4px; max-height: 130px; overflow-y: auto; border: 1px solid #2d3748; }
+        .stage-ticker { background: #111625; border: 1px solid #4a5568; border-radius: 6px; padding: 12px; font-size: 1.1rem; font-family: monospace; color: #ecc94b; margin: 10px 0; text-align: center; font-weight: bold; min-height: 40px; word-wrap: break-word;}
+
+        .dsp-strip { background: #2d3748; border: 1px solid #4a5568; border-radius: 6px; padding: 12px; margin-top: 10px; }
+        .dsp-toggle-active { background: #dd6b20 !important; color: #fff !important; }
+
+        /* Volume Normalization Progress Overlay Styles */
+        #norm-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; z-index: 9999; align-items: center; justify-content: center; flex-direction: column; }
+        .norm-modal { background: #1a202c; padding: 30px; border-radius: 8px; border: 1px solid #2d3748; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .norm-progress-bar { background: #2d3748; border-radius: 4px; height: 20px; overflow: hidden; margin-bottom: 10px; border: 1px solid #4a5568; }
+        .norm-progress-fill { background: #ecc94b; width: 0%; height: 100%; transition: width 0.05s linear; }
+
+        @media (max-width: 900px) {
+            body { margin: 10px; }
+            .grid-container { grid-template-columns: 1fr; }
+            .control-group { flex-direction: column; align-items: stretch; }
+            .control-group > div, .control-group button, .upload-btn { width: 100%; margin-bottom: 5px; }
+            button, .upload-btn, input[type="file"], select, input[type="number"], input[type="range"], input[type="text"] { min-height: 50px; font-size: 1rem; }
+            .tab-bar { flex-direction: column; }
+            .tab { text-align: center; border-radius: 4px; margin-bottom: 4px; padding: 12px; }
+            .settings-grid { grid-template-columns: 1fr; }
+            .beat-bar { gap: 10px; }
+            .beat-dot { width: 14px; height: 14px; }
+            .word-usage-tooltip { max-width: 82vw; font-size: 0.85rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="norm-overlay">
+        <div class="norm-modal">
+            <h4 style="margin: 0 0 15px 0; color: #fff; font-size: 1.1rem; border-bottom: 1px solid #4a5568; padding-bottom: 8px;">Volume Normalization Progress</h4>
+            <div class="norm-progress-bar">
+                <div id="norm-fill" class="norm-progress-fill"></div>
+            </div>
+            <div id="norm-text" style="font-size: 0.85rem; color: #a0aec0; word-break: break-all; min-height: 2.4em;">Preparing...</div>
+        </div>
+    </div>
+
+    <h1></h1>
+
+    <div class="grid-container">
+        <div>
+            <div class="panel">
+                <button id="mic-init-btn" onclick="initAudioContext()" style="width:100%; background:#319795; font-size:1.1rem; padding:12px; margin-bottom:15px;">🎙️ Step 1: Initialize Audio Context Stream</button>
+                <div id="mic-status" style="color: #ecc94b; text-align:center; margin-bottom:15px; font-size:0.95rem; font-weight:bold;">Status: Uninitialized</div>
+<div class="control-group" style="margin-top:10px;">
+    <label for="mic-select">Select Microphone:</label>
+    <select id="mic-select" onchange="initAudioContext()">
+        <option value="">Default System Microphone</option>
+    </select>
+</div>
+<div class="control-group">
+    <label for="codriver-name-input">🏁 Co-Driver Name <span style="color:#718096; font-weight:normal;">(used in export filenames &amp; .ini)</span></label>
+    <input type="text" id="codriver-name-input" value="My Custom CoDriver" placeholder="e.g. Steve" oninput="codriverName = this.value" onchange="updateCodriverName()">
+</div>
+<div class="control-group">
+    <label for="profile-select">👤 Codriver Profile <span style="color:#718096; font-weight:normal;">(separate voice sets, stored side by side)</span></label>
+    <select id="profile-select" onchange="handleProfileDropdownChange()">
+        <option value="default">Default</option>
+    </select>
+    <div id="active-profile-label" style="font-size:0.75rem; color:#718096; margin-top:4px;">Active profile: Default</div>
+</div>
+
+                <div class="tab-bar">
+                    <div class="tab active" id="tab-script" onclick="switchWorkflowMode('script')">📋 Scripting Algorithm Workflow</div>
+                    <div class="tab" id="tab-target" onclick="switchWorkflowMode('target')">🎯 Targeted Individual Token Mode</div>
+                </div>
+
+                <div class="recording-box" id="recording-box">
+                    <div class="script-meta-row">
+                        <span id="script-progress-label" class="script-progress-label"></span>
+                        <span id="script-context-label" class="script-context-label" style="display:none;"></span>
+                    </div>
+
+                    <div class="severity-legend">
+                        <span class="legend-item"><span class="legend-dot severity-urgent"></span>Urgent</span>
+                        <span class="legend-item"><span class="legend-dot severity-elevated"></span>Elevated</span>
+                        <span class="legend-item"><span class="legend-dot severity-firm"></span>Firm</span>
+                        <span class="legend-item"><span class="legend-dot severity-warm"></span>Warm</span>
+                        <span class="legend-item"><span class="legend-dot severity-neutral"></span>Neutral</span>
+                    </div>
+
+                    <div class="token-stage" id="token-stage">
+                        <div id="target-token-display" class="token-display">Initialize capture to show script mesh elements...</div>
+                        <div class="countdown-overlay" id="countdown-overlay">
+                            <div id="countdown-label" class="countdown">0.0</div>
+                        </div>
+                    </div>
+
+                    <div class="beat-bar" id="beat-bar" aria-hidden="true">
+                        <div class="beat-dot"></div>
+                        <div class="beat-dot"></div>
+                        <div class="beat-dot"></div>
+                        <div class="beat-dot"></div>
+                    </div>
+                    
+                    <div class="control-group" style="justify-content: center; margin-top: 15px;">
+                        <button class="rec-btn" id="start-rec-btn" onclick="engageAcquisitionCycle()" disabled style="background:#4a5568;">🔴 Start Recording</button>
+                        <button class="stop-btn" id="stop-rec-btn" onclick="terminateAcquisitionCycle()" disabled>⏹️ Stop / Process</button>
+                        <button class="next-btn" id="prev-script-btn" onclick="goToPreviousScriptPrompt()" style="background:#4a5568;">⬅️ Previous Script</button>
+                        <button class="next-btn" id="next-script-btn" onclick="advanceToNextScriptPrompt()">➡️ Accept & Next Script</button>
+                        <button onclick="playCurrentCache()">▶️ Audition Audio</button>
+                    </div>
+
+                    <div class="dsp-strip">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: bold; color: #ecc94b; font-size:0.9rem;">📻 Co-Driver Intercom DSP Simulation Profile</span>
+                            <button id="dsp-toggle-btn" onclick="toggleDSPPlaybackState()" style="background:#4a5568; padding:4px 12px; font-size:0.8rem;">Filter: OFF</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div>
+                                <label for="dsp-drive" id="lbl-dsp-drive" style="font-size:0.75rem;">Mic Saturation (Drive): 15x</label>
+                                <input type="range" id="dsp-drive" min="1" max="50" step="1" value="15" onchange="updateDSPLabels()">
+                            </div>
+                            <div>
+                                <label for="dsp-bandwidth" id="lbl-dsp-bandwidth" style="font-size:0.75rem;">Bandwidth Clamp: Narrow Radio</label>
+                                <select id="dsp-bandwidth" onchange="updateDSPLabels()">
+                                    <option value="vintage">Stilo Vintage Low-Fi (300Hz - 3.5kHz)</option>
+                                    <option value="modern">Clear Comms (150Hz - 6kHz)</option>
+                                    <option value="aggressive">Aggressive Cockpit Radio Distortion</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-group" style="justify-content: center; margin-top: 10px; border-top: 1px dashed #4a5568; padding-top: 15px;">
+                        <label for="audio-upload-input" class="upload-btn">⬆️ Upload Audio Source File</label>
+                        <input type="file" id="audio-upload-input" accept="audio/*" style="display: none;" onchange="handleFileUpload(event)">
+                    </div>
+                </div>
+
+                <div id="word-usage-tooltip" class="word-usage-tooltip"></div>
+
+                <div class="control-group settings-grid">
+                    <div>
+                        <label for="trim-threshold">Silence Threshold (RMS):</label>
+                        <input type="range" id="trim-threshold" min="0.001" max="0.1" step="0.001" value="0.010" onchange="updateParameters()">
+                        <span id="threshold-val" style="font-size:0.8rem; color:#a0aec0">Current Limit: 0.010</span>
+                    </div>
+                    <div>
+                        <label for="min-silence-len">Min Silence Break (ms):</label>
+                        <input type="number" id="min-silence-len" min="50" max="1000" step="10" value="150" onchange="updateParameters()">
+                    </div>
+                    <div>
+                        <label for="countdown-duration">Pre-Roll Delay (Sec):</label>
+                        <input type="number" id="countdown-duration" min="0.0" max="5.0" step="0.1" value="1.0">
+                    </div>
+                    <div>
+                        <label for="beat-pace-input">🥁 Reading Pace (words/min):</label>
+                        <input type="range" id="beat-pace-input" min="60" max="220" step="5" value="120" oninput="updateBeatTempo()">
+                        <span id="beat-pace-val" style="font-size:0.8rem; color:#a0aec0">120 wpm</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>System Manifest Matrix Inventory</h2>
+                <div style="font-size:0.75rem; color:#a0aec0; margin-bottom:10px; display:flex; gap:16px; flex-wrap:wrap;">
+                    <span><span style="display:inline-block; width:10px; height:10px; background:#319795; border-radius:2px; margin-right:4px;"></span>Pacenote word</span>
+                    <span><span style="display:inline-block; width:10px; height:10px; background:#dd6b20; border-radius:2px; margin-right:4px;"></span>Impact (Audio/Impact/Speech)</span>
+                    <span><span style="display:inline-block; width:10px; height:10px; background:#d69e2e; border-radius:2px; margin-right:4px;"></span>Go / Start countdown</span>
+                </div>
+                <div class="control-group" style="display: grid; grid-template-columns: auto 1fr; gap: 20px;">
+                    <div>
+                        <button class="action-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
+                        <div style="font-size:0.68rem; color:#718096; margin-top:4px; text-align:center;">Files are WAV audio saved with a .ogg extension — see _HOW_TO_INSTALL.txt if your plugin build validates headers.</div>
+                    </div>
+                    <div class="progress-container" style="margin-top: auto; margin-bottom: auto;">
+                        <div class="progress-bar" id="master-progress"></div>
+                        <div class="progress-text" id="master-progress-text">0 / -- Required Files Captured (0%)</div>
+                        <div id="bonus-progress-text" style="font-size:0.75rem; color:#a0aec0; text-align:center; margin-top:2px;"></div>
+                        <div id="compliance-summary" style="font-size:0.75rem; text-align:center; margin-top:4px;"></div>
+                    </div>
+                </div>
+                <div class="matrix-container">
+                    <div class="matrix-grid" id="token-matrix-mesh"></div>
+                </div>
+            </div>
+        </div>
+
+        <div>
+<div class="panel" id="changelog-panel" style="border-color: #ecc94b; height: auto !important;">
+    <h3 style="color: #ecc94b;">🚗 Changelog</h3>
+    <div id="changelog-content">Loading...</div>
+    
+    <button id="toggle-history-btn" onclick="toggleHistory()" style="margin-top:10px; font-size: 0.7rem; background:#2d3748; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">View Old Updates</button>
+    
+    <!-- FIX: Added max-height and overflow scroll so all 12 items are reachable -->
+    <div id="changelog-archive" style="display:none; margin-top:10px; max-height: 260px; overflow-y: auto; padding-right: 5px;"></div>
+</div>
+
+            <div class="panel" style="border-color: #319795;">
+                <h3 style="color: #319795; border-color: #319795;">Stage Fluidity Playground</h3>
+                <p style="font-size:0.85rem; color:#a0aec0; margin-bottom:10px;">Builds a random pacenote phrase entirely out of words you've actually recorded, so you can audit transition clipping, phrasing, and cadence — independent of whatever script you're currently working through.</p>
+                <div class="control-group">
+                    <button class="action-btn" onclick="generateProceduralStage()">🎲 Construct Random String</button>
+                    <button id="playback-stage-btn" onclick="playbackGeneratedStage()" disabled style="background:#ecc94b; color:#000;">🔊 Audition Run</button>
+                </div>
+                <div id="fluidity-token-display" class="token-display" style="min-height:44px; font-size:1.15rem; margin-bottom:8px;"></div>
+                <div class="stage-ticker" id="stage-ticker-display">--- NO STAGE GENERATED ---</div>
+            </div>
+
+            <div class="panel" style="border-color: #ecc94b;">
+                <h3 style="color: #ecc94b; border-color: #ecc94b;">Session State Control</h3>
+                <p style="font-size: 0.85rem; color: #a0aec0; margin-bottom: 12px;">Saves your captured voice buffers directly into internal browser databases so you can close down the studio window and safely resume later.</p>
+                <div class="control-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                    <button onclick="saveStudioSessionToStorage()" style="background: #ecc94b; color:#000;">💾 Save Session</button>
+                    <button onclick="loadStudioSessionFromStorage()" style="background: #4a5568;">📂 Load Session</button>
+                </div>
+                <button class="action-btn" onclick="normalizeSessionVolumes(0.95)" style="width: 100%; padding: 6px; font-size: 0.8rem; margin-bottom: 8px;">Normalize Volumes</button>
+                <button class="danger-btn" onclick="clearStudioSessionStorage()" style="width: 100%; padding: 6px; font-size: 0.8rem;">⚠️ Clear Local Cache</button>
+                <div id="session-timestamp" style="font-size: 0.78rem; color: #718096; margin-top: 8px; text-align: center;">No stored session discovered.</div>
+
+                <div style="border-top: 1px dashed #4a5568; margin-top: 14px; padding-top: 12px;">
+                    <p style="font-size: 0.8rem; color: #a0aec0; margin-bottom: 8px;">Browser storage can be cleared or lost. A portable backup lets you move this project to another browser or device.</p>
+                    <div class="control-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <button onclick="exportProjectBackup()" style="background: #4299e1;">⬇️ Export Backup (.zip)</button>
+                        <label for="backup-import-input" class="upload-btn" style="text-align:center;">⬆️ Import Backup (.zip)</label>
+                        <input type="file" id="backup-import-input" accept=".zip" style="display:none;" onchange="importProjectBackup(event)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h4>Pipeline Diagnostics</h4>
+                <div class="log-output" id="engine-log">System Standby. Ready for file uploads or mic initialization.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const capturedAudioBuffers = {};
+        const audioQualityFlags = {};
+        let audioContext = null;
+        let audioRecorder = null;
+        let capturedChunks = [];
+        let activeTargetFileKey = null;
+        let countdownIntervalId = null;
+        
+        let currentWorkflowMode = 'script'; 
+        let currentScriptIndex = 0;
+        let generatedStageSequence = [];
+        let singleTokenRerecordTarget = null;
+        let codriverName = 'My Custom CoDriver';
+        let activeProfileName = 'default';
+	let lang = 'en';
+	let currentVersion = "3.0.5";
+	
+	
+	document.title = "Pacenote Recorder Studio - v" + currentVersion;
+   	document.querySelector('h1').innerText = "Pacenote Recorder Studio (v" + currentVersion + ")";
+
+        function profileBufferKey(tokenKey) {
+            return activeProfileName === 'default' ? tokenKey : `${activeProfileName}::${tokenKey}`;
+        }
+        function profileMetaKey(metaKey) {
+            return activeProfileName === 'default' ? metaKey : `${activeProfileName}::${metaKey}`;
+        }
+
+        let silenceThresholdLimit = 0.010;
+        let minSilenceDurationMs = 150; 
+        let useDSPFilterEngine = false;
+
+        let dbInstance = null;
+        function getDB() {
+            if (dbInstance) return Promise.resolve(dbInstance);
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('RBRStudioDB', 1);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+                    if (!db.objectStoreNames.contains('buffers')) db.createObjectStore('buffers');
+                };
+                request.onsuccess = (e) => { dbInstance = e.target.result; resolve(dbInstance); };
+                request.onerror = (e) => reject(e.target.error);
+            });
+        }
+
+        function logToConsole(msg) {
+            const lb = document.getElementById('engine-log');
+            lb.innerHTML += `<br>> ${msg}`;
+            lb.scrollTop = lb.scrollHeight;
+        }
+
+        function updateParameters() {
+            silenceThresholdLimit = parseFloat(document.getElementById('trim-threshold').value);
+            minSilenceDurationMs = parseInt(document.getElementById('min-silence-len').value);
+            document.getElementById('threshold-val').innerText = `Current Limit: ${silenceThresholdLimit}`;
+        }
+
+        function sanitizeCodriverNameForFile(name) {
+            const trimmed = (name || '').trim();
+            const safe = trimmed.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
+            return safe.length > 0 ? safe : 'custom_codriver';
+        }
+
+        function updateCodriverName() {
+            codriverName = document.getElementById('codriver-name-input').value;
+            saveStudioSessionToStorage(true);
+        }
+
+        function updateDSPLabels() {
+            const driveValue = document.getElementById('dsp-drive').value;
+            document.getElementById('lbl-dsp-drive').innerText = `Mic Saturation (Drive): ${driveValue}x`;
+        }
+
+        function toggleDSPPlaybackState() {
+            useDSPFilterEngine = !useDSPFilterEngine;
+            const btn = document.getElementById('dsp-toggle-btn');
+            btn.innerText = useDSPFilterEngine ? "Filter: ON" : "Filter: OFF";
+            btn.classList.toggle('dsp-toggle-active', useDSPFilterEngine);
+            logToConsole(`Comms Radio Simulation Matrix toggled: ${useDSPFilterEngine ? 'ACTIVE' : 'INACTIVE'}`);
+        }
+
+        const pacenoteWordVariantCounts = {"1000_":4,"1001_":4,"100_":4,"101_":4,"10_":4,"120_":4,"121_":4,"140_":4,"141_":4,"150_":4,"151_":4,"160_":4,"161_":4,"180_":4,"181_":4,"1_":4,"200_":4,"201_":4,"20_":4,"21_":4,"250_":4,"251_":4,"2_":4,"300_":4,"301_":4,"30_":4,"31_":4,"350_":4,"351_":4,"3_":4,"400_":4,"401_":4,"40_":4,"41_":4,"450_":4,"451_":4,"4_":4,"500_":4,"501_":4,"50_":4,"51_":4,"5_":4,"600_":4,"601_":4,"60_":4,"61_":4,"6_":4,"700_":4,"701_":4,"70_":4,"71_":4,"7_":4,"800_":4,"801_":4,"80_":4,"81_":4,"8_":4,"900_":4,"901_":4,"90_":4,"90_left":4,"90_left_plus":4,"90_plus_scale":3,"90_right":4,"90_right_plus":4,"90_scale":3,"91_":4,"9_":4,"_90_":3,"_90_plus":3,"_acute":3,"_five":3,"_five_plus":3,"_flat":3,"_four":3,"_four_plus":3,"_hp":3,"_hp_plus":3,"_max":3,"_one":3,"_one_plus":3,"_open_hp":3,"_six":3,"_six_plus":3,"_square":3,"_square_plus":3,"_three":3,"_three_plus":3,"_two":3,"_two_plus":3,"a_bit":2,"a_lot":2,"acute_left":4,"acute_right":4,"acute_scale":3,"after":2,"again":4,"and":4,"at":2,"at_bale":2,"at_banner":2,"at_barrel":2,"at_black":2,"at_blue":2,"at_bridge":2,"at_bush":2,"at_car":2,"at_crest":2,"at_entry":2,"at_exit":2,"at_fence":2,"at_flag":2,"at_gate":2,"at_green":2,"at_guardrail":2,"at_house":2,"at_junction":2,"at_log":2,"at_logs":2,"at_object":2,"at_opening":2,"at_post":2,"at_red":2,"at_rock":2,"at_sign":2,"at_tape":2,"at_thing":2,"at_tree":2,"at_trees":2,"at_wall":2,"at_white":2,"at_yellow":2,"bad":3,"bad_bump":2,"bad_bump_dip":2,"bad_bump_dips":2,"bad_bumps":2,"bad_camber":1,"bad_squash":2,"bad_sumppu":2,"badcamber":2,"bale":2,"bale_in":2,"bale_out":2,"bales":2,"barrel_in":2,"barrel_out":2,"barrels":2,"batterys_flat":1,"be_brave":2,"before":2,"behind":2,"better_grip":2,"between_bales":2,"between_barrels":2,"between_tires":2,"big":2,"big_dab":2,"big_jump":2,"big_squash":2,"big_sumppu":2,"black_ice":2,"blind":2,"bloodylong":3,"border":2,"boulder":2,"brake":3,"brake_10_":3,"brake_20_":3,"brake_30_":3,"brake_40_":3,"brake_50_":3,"brake_and":3,"brake_into":3,"bridge":2,"bridge_bump":2,"brow":2,"bump":2,"bump_dip":2,"bump_dips":2,"bumps":2,"bumps_over":2,"bumpy_braking":2,"bush":2,"busstop_chicane":4,"busstop_chicane_left":4,"busstop_chicane_right":4,"camber":2,"care":3,"care_in":2,"care_out":2,"caution":3,"caution_water":2,"cautioncaution":3,"cautioncautioncaution":3,"checkpoint":2,"chicane":4,"chicane_dive_left":4,"chicane_dive_right":4,"chicane_left_entry":4,"chicane_right_entry":4,"clip":2,"cobbles":2,"concrete":2,"continues_over_brow":2,"continues_over_crest":2,"continues_over_small_crest":2,"cramped":2,"crest":2,"crest_dab":2,"crest_to_left":2,"crest_to_right":2,"curb":2,"curbside":2,"curve":2,"cut":3,"cut_through":2,"dab":2,"dab_over_jump":2,"damp":2,"deceptive":2,"deep":2,"deep_rut":2,"deep_ruts":2,"dip":2,"directly":2,"dirt":2,"dirty":2,"ditch":2,"ditch_in":2,"ditch_out":2,"done":2,"dont":3,"dont_cut":3,"dont_cut_early":2,"dont_cut_late":2,"dont_early":2,"dont_late":2,"donut_left":4,"donut_right":4,"double":2,"double_caution":3,"double_crest":2,"double_dont":2,"double_dont_cut":2,"double_jump":2,"doubletightens":3,"down":2,"drain":2,"drain_in":2,"drain_out":2,"draws_in":2,"drop_in":2,"drop_out":2,"drops":2,"drops_left":2,"drops_right":2,"dry":2,"early":3,"early_cut":2,"easy":3,"edge":2,"exact":2,"exit_lap":4,"fast":3,"fence":2,"fence_in":2,"fence_out":2,"fickle":2,"finish":4,"first_exit":2,"five_bales":2,"five_left":4,"five_left_plus":4,"five_parts":2,"five_plus_scale":3,"five_right":4,"five_right_plus":4,"five_scale":3,"flat":3,"flat_crest":2,"flat_jump":2,"flat_left":4,"flat_right":4,"flat_scale":3,"for":2,"fork_left":4,"fork_right":4,"four_bales":2,"four_left":4,"four_left_plus":4,"four_parts":2,"four_plus_scale":3,"four_right":4,"four_right_plus":4,"four_scale":3,"from":2,"from_left":2,"from_right":2,"fuckinglong":3,"full_cut":2,"gate":2,"gearbox_broke":1,"gets_faster":2,"gets_rougher":2,"gets_slower":2,"gets_smoother":2,"go":3,"go_narrow":2,"go_round":2,"go_straight":2,"go_wide":2,"good":2,"gravel":2,"grid":2,"grip":2,"grip_in":2,"grip_middle":2,"grip_out":2,"grit":2,"guardrail":2,"guardrail_in":2,"guardrail_out":2,"guardrails":2,"halflong":3,"handbrake":2,"hang":2,"hard":3,"hole":2,"hollow":2,"hook":2,"house":2,"house_in":2,"house_out":2,"hp_left":4,"hp_left_plus":4,"hp_plus_scale":3,"hp_right":4,"hp_right_plus":4,"hp_scale":3,"hug":2,"ice":2,"icy":2,"immediate":4,"important":2,"in":2,"in_and_out":2,"into":4,"island":2,"jump":2,"jump_dab":2,"jump_maybe":2,"junction":3,"junction_left":4,"junction_right":4,"keep_in":2,"keep_left":2,"keep_middle":2,"keep_out":2,"keep_right":2,"late":3,"late_cut":2,"lateish":2,"layby":2,"left":4,"left_around":4,"left_entry":2,"left_into":4,"left_over":4,"left_right":4,"leftish":2,"lift":2,"lifts":2,"light":2,"line":3,"log":2,"log_in":2,"log_out":2,"logs":2,"logs_in":2,"logs_out":2,"long":3,"long_crest":2,"long_rut":2,"long_ruts":2,"longlong":3,"loose_gravel":2,"lump":2,"many":2,"marshalls":2,"mast":2,"max_left":4,"max_right":4,"max_scale":3,"maybe":3,"maybe_slippy":2,"minus":2,"minusminus":2,"much":2,"muddy":2,"narrow":2,"narrow_bridge":2,"narrow_gate":2,"narrows":3,"near":2,"neat":2,"negative":2,"netting":2,"nips":2,"off":2,"on":2,"one_left":4,"one_left_plus":4,"one_plus_scale":3,"one_right":4,"one_right_plus":4,"one_scale":3,"onto":4,"onto_big_road":2,"onto_bridge":2,"onto_cobbles":2,"onto_concrete":2,"onto_field":2,"onto_finish":4,"onto_grass":2,"onto_gravel":2,"onto_grit":2,"onto_ice":2,"onto_narrow_bridge":2,"onto_narrower":2,"onto_nextlap":4,"onto_slush":2,"onto_small_road":2,"onto_snow":2,"onto_straight":2,"onto_tarmac":2,"onto_wider":2,"open_hp_left":4,"open_hp_right":4,"open_hp_scale":3,"opens":2,"opens_90_":3,"opens_90_plus":3,"opens_abit":2,"opens_at_junction":2,"opens_bloodylong":2,"opens_early":2,"opens_five":3,"opens_five_plus":3,"opens_flat":3,"opens_four":3,"opens_four_plus":3,"opens_fuckinglong":2,"opens_halflong":2,"opens_hp":3,"opens_hp_plus":3,"opens_late":2,"opens_long":2,"opens_longlong":2,"opens_max":3,"opens_one":3,"opens_one_plus":3,"opens_open_hp":3,"opens_overcrest":2,"opens_round":2,"opens_sharp":2,"opens_six":3,"opens_six_plus":3,"opens_square":3,"opens_square_plus":3,"opens_three":3,"opens_three_plus":3,"opens_tightens":2,"opens_two":3,"opens_two_plus":3,"opens_verylong":2,"opens_veryverylong":2,"out":2,"over":2,"over_big_jump":2,"over_bridge":2,"over_brow":2,"over_crest":2,"over_early_and_late_crest":2,"over_early_crest":2,"over_jump":2,"over_jump_dab":2,"over_jump_maybe":2,"over_late_crest":2,"over_long_crest":2,"over_narrow_bridge":2,"over_rails":2,"over_rocks":2,"over_small_crest":2,"over_small_jump":2,"over_three_crests":2,"over_two_crests":2,"past_junction":2,"path":2,"patient":2,"plus":2,"plusplus":2,"positive":2,"post":2,"post_early":2,"post_in":2,"post_late":2,"post_out":2,"posts":2,"precise":2,"problem_engine":1,"puddle":2,"rails":2,"remember":2,"right":4,"right_around":4,"right_entry":2,"right_into":4,"right_left":4,"right_over":4,"rightish":2,"road":2,"rock":2,"rocks":2,"rocks_in":2,"rocks_out":2,"rotate":3,"round":3,"roundabout":2,"rubble":2,"rut":2,"ruts":2,"scale_minus":2,"scale_plus":2,"second_exit":2,"see":2,"sharp":3,"shit":2,"short":3,"short_left":4,"short_right":4,"shortshort":3,"shoulder":2,"sidewalk":2,"sign":2,"sign_in":2,"sign_out":2,"six_left":4,"six_left_plus":4,"six_plus_scale":3,"six_right":4,"six_right_plus":4,"six_scale":3,"slide":2,"slight":2,"slight_tightens":2,"slippy":2,"slippy_braking":2,"slippy_entry":2,"slippy_exit":2,"slow":3,"slow_crest":2,"slowing":3,"slush":2,"small":2,"small_crest":2,"small_cut":2,"small_dab":2,"small_jump":2,"small_squash":2,"small_sumppu":2,"snow":2,"snow_border":2,"spectators":2,"speed":2,"speedbump":2,"split":2,"split_time":2,"square_left":4,"square_left_plus":4,"square_plus_scale":3,"square_right":4,"square_right_plus":4,"square_scale":3,"squash":2,"stay_in_rut":2,"stay_out":2,"stay_out_of_rut":2,"steep_drop":2,"steep_hill":2,"steep_incline":2,"steep_slope":2,"steering_broke":1,"stone":2,"stone_in":2,"stone_out":2,"stop":2,"straight":2,"stump":2,"sudden":4,"sumppu":2,"surface":2,"surface_change":2,"sus_broke":1,"take":2,"take_speed":2,"tape":2,"tarmac":2,"then":2,"third_exit":2,"three_bales":2,"three_left":4,"three_left_plus":4,"three_parts":2,"three_plus_scale":3,"three_right":4,"three_right_plus":4,"three_scale":3,"three_times_dont":2,"three_times_dontcut":2,"through":2,"through_gate":2,"through_narrow_gate":2,"throws":2,"tight":2,"tightens":3,"tightens_90_":3,"tightens_90_plus":3,"tightens_abit":2,"tightens_acute":3,"tightens_at_junction":2,"tightens_bad_squash":2,"tightens_bad_sumppu":2,"tightens_big_squash":2,"tightens_big_sumppu":2,"tightens_bloodylong":2,"tightens_early":2,"tightens_five":3,"tightens_five_plus":3,"tightens_four":3,"tightens_four_plus":3,"tightens_fuckinglong":2,"tightens_halflong":2,"tightens_hp":3,"tightens_hp_plus":3,"tightens_late":2,"tightens_long":2,"tightens_longlong":2,"tightens_one":3,"tightens_one_plus":3,"tightens_open_hp":3,"tightens_opens":2,"tightens_overcrest":2,"tightens_round":2,"tightens_sharp":2,"tightens_six":3,"tightens_six_plus":3,"tightens_small_squash":2,"tightens_small_sumppu":2,"tightens_square":3,"tightens_square_plus":3,"tightens_squash":2,"tightens_sumppu":2,"tightens_three":3,"tightens_three_plus":3,"tightens_two":3,"tightens_two_plus":3,"tightens_verylong":2,"tightens_veryverylong":2,"tires":2,"tires_in":2,"tires_out":2,"to_bump":2,"to_crest":2,"to_dip":2,"to_jump":2,"to_sight_distance":2,"tofinish":4,"tree":2,"tree_in":2,"tree_out":2,"trees":2,"triple_caution":3,"triple_dont":2,"triple_dont_cut":2,"trust":2,"tunnel":2,"turn":3,"twisty":2,"twisty_from_left":2,"twisty_from_right":2,"two_bales":2,"two_left":4,"two_left_plus":4,"two_parts":2,"two_plus_scale":3,"two_right":4,"two_right_plus":4,"two_scale":3,"two_times_dont":2,"two_times_dontcut":2,"understeer":2,"unseen":2,"until":2,"up":2,"very":2,"very_short":3,"very_slippy":2,"verylong":3,"veryverylong":3,"walk":4,"wall":2,"wall_in":2,"wall_out":2,"walls":2,"watch":2,"water":2,"water_temp":1,"well_done":4,"wet":2,"weve_got_fire":1,"wide":2,"widens":2,"wideout":3,"wooden_fence":2,"worse_grip":2,"wv_lost_brakes":1};
+
+        const SILENCE_FILENAME = 'silence650.ogg';
+
+        const impactSpeechFiles = [
+            { file: 'Oh_no.wav', phrase: 'Oh no!' },
+            { file: 'oh_no1.wav', phrase: 'Oh no!' },
+            { file: 'oh_no2.wav', phrase: 'Oh no!' },
+            { file: 'oh_no3.wav', phrase: 'Oh no!' },
+            { file: 'ugh.wav', phrase: 'Ugh!' },
+            { file: 'ugh1.wav', phrase: 'Ugh!' },
+            { file: 'ughhard.wav', phrase: "Ughh, that was a big one!" },
+            { file: 'ughhard1.wav', phrase: "Ughh, that was a big one!" },
+            { file: 'ughhard2.wav', phrase: "Ughh, that was a big one!" },
+            { file: 'watch.wav', phrase: 'Watch it!' },
+            { file: 'watch1.wav', phrase: 'Watch it!' },
+            { file: 'watch2.wav', phrase: 'Watch it!' },
+            { file: 'watch3.wav', phrase: 'Watch it!' }
+        ];
+
+        const gameSpeechFiles = [
+            { file: 'Go.wav', phrase: 'Go!' }
+        ];
+
+        const numberSpeechFiles = [
+            { file: 'start1.ogg', phrase: 'Three' },
+            { file: 'start2.ogg', phrase: 'Two' },
+            { file: 'start3.ogg', phrase: 'One' }
+        ];
+
+        const brokenEngDuplicateWords = [
+            'batterys_flat', 'gearbox_broke', 'problem_engine', 'steering_broke',
+            'sus_broke', 'water_temp', 'weve_got_fire', 'wv_lost_brakes'
+        ];
+
+        const displayOverrides = {
+            batterys_flat: "The battery's flat",
+            gearbox_broke: "Gearbox is broken",
+            problem_engine: "Problem with the engine",
+            steering_broke: "Steering's broken",
+            sus_broke: "Suspension's broken",
+            water_temp: "Water temperature warning",
+            weve_got_fire: "We've got a fire!",
+            wv_lost_brakes: "We've lost the brakes!",
+            dont_cut: "Don't Cut"
+        };
+
+        const completeSoundManifest = [];
+        Object.keys(pacenoteWordVariantCounts).forEach(base => {
+            const count = pacenoteWordVariantCounts[base];
+            for (let v = 1; v <= count; v++) { completeSoundManifest.push(`${base}${v}`); }
+        });
+        impactSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+        gameSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+        numberSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+const TARGET_SCRIPT_LENGTH = 20; 
+
+        const CORNER_WORD_SET = new Set([
+            '_90_', '_90_plus', '_acute', '_five', '_five_plus', '_flat', '_four', '_four_plus',
+            '_hp', '_hp_plus', '_max', '_one', '_one_plus', '_open_hp', '_six', '_six_plus',
+            '_square', '_square_plus', '_three', '_three_plus', '_two', '_two_plus'
+        ]);
+        const CORNER_SHAPE_WORDS = new Set(['90', 'acute', 'five', 'flat', 'four', 'hp', 'max', 'one', 'open', 'six', 'square', 'three', 'two']);
+        const DIRECTION_WORD_SET = new Set(['left', 'right']);
+        const CONNECTOR_WORD_SET = new Set([
+            'and', 'at', 'for', 'from', 'into', 'off', 'onto', 'over', 'then', 'through', 'until', 'up'
+        ]);
+
+        function categorizeBaseTokens() {
+            const pools = { DISTANCE: [], CORNER: [], DIRECTION: [], CONNECTOR: [], VOCAB: [] };
+            Object.keys(pacenoteWordVariantCounts).forEach(base => {
+                if (/^\d+_$/.test(base)) pools.DISTANCE.push(base);
+                else if (CORNER_WORD_SET.has(base)) pools.CORNER.push(base);
+                else if (DIRECTION_WORD_SET.has(base)) pools.DIRECTION.push(base);
+                else if (CONNECTOR_WORD_SET.has(base)) pools.CONNECTOR.push(base);
+                else pools.VOCAB.push(base);
+            });
+            return pools;
+        }
+
+        function formatScriptDisplayWord(baseToken, category) {
+            if (displayOverrides[baseToken]) return displayOverrides[baseToken];
+            if (category === 'DISTANCE') return baseToken.replace(/_+$/, '');
+            const spaced = baseToken.replace(/^_+/, '').replace(/_+$/, '').replace(/_/g, ' ');
+            const words = spaced.split(' ').filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            return (category === 'CONNECTOR') ? words.toLowerCase() : (words || baseToken);
+        }
+
+        function categoryHasUsableRemaining(pools, category, remainingCounts, usedInThisScript) {
+            return pools[category].some(t => remainingCounts[t] > 0 && !usedInThisScript.has(t));
+        }
+
+        function stableHash(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
+            }
+            return hash >>> 0; 
+        }
+
+        function deterministicTieBreak(a, b) {
+            const diff = stableHash(a) - stableHash(b);
+            return diff !== 0 ? diff : a.localeCompare(b); 
+        }
+
+        function pickNextScriptToken(pools, category, remainingCounts, nextVariantNumbers, usedInThisScript) {
+            let candidates = pools[category].filter(t => remainingCounts[t] > 0 && !usedInThisScript.has(t));
+            if (candidates.length === 0) candidates = pools[category].filter(t => remainingCounts[t] > 0);
+
+            candidates = candidates.slice().sort((a, b) => {
+                const diff = remainingCounts[b] - remainingCounts[a];
+                return diff !== 0 ? diff : deterministicTieBreak(a, b);
+            });
+
+            const baseToken = candidates[0];
+            remainingCounts[baseToken]--;
+            const variantNum = nextVariantNumbers[baseToken]++;
+            usedInThisScript.add(baseToken);
+            return { baseToken, key: `${baseToken}${variantNum}` };
+        }
+
+        function createCategoryPicker(pools) {
+            const weights = {};
+            Object.keys(pools).forEach(cat => {
+                weights[cat] = pools[cat].reduce((sum, tok) => sum + pacenoteWordVariantCounts[tok], 0);
+            });
+            const currentWeights = {};
+            Object.keys(pools).forEach(cat => { currentWeights[cat] = 0; });
+
+            return function pickCategory(remainingCounts, usedInThisScript) {
+                const active = Object.keys(pools).filter(cat =>
+                    categoryHasUsableRemaining(pools, cat, remainingCounts, usedInThisScript));
+                if (active.length === 0) return null;
+
+                let totalWeight = 0;
+                let best = null;
+                active.forEach(cat => {
+                    currentWeights[cat] += weights[cat];
+                    totalWeight += weights[cat];
+                    if (best === null || currentWeights[cat] > currentWeights[best]) best = cat;
+                });
+                currentWeights[best] -= totalWeight;
+                return best;
+            };
+        }
+
+        function fixConnectorPlacement(categories, tokens, display) {
+            const n = categories.length;
+            if (n === 0) return;
+
+            function swap(i, j) {
+                [categories[i], categories[j]] = [categories[j], categories[i]];
+                [tokens[i], tokens[j]] = [tokens[j], tokens[i]];
+                [display[i], display[j]] = [display[j], display[i]];
+            }
+            function violationIndex() {
+                if (categories[0] === 'CONNECTOR') return 0;
+                if (categories[n - 1] === 'CONNECTOR') return n - 1;
+                for (let i = 1; i < n; i++) {
+                    if (categories[i] === 'CONNECTOR' && categories[i - 1] === 'CONNECTOR') return i;
+                }
+                return -1;
+            }
+
+            let idx, attempts = 0;
+            while ((idx = violationIndex()) !== -1 && attempts < n * 2) {
+                attempts++;
+                let swapped = false;
+                for (let j = 0; j < n; j++) {
+                    if (categories[j] === 'CONNECTOR' || j === idx) continue;
+                    const leftOk = (j === 0) || categories[j - 1] !== 'CONNECTOR' || (j - 1 === idx);
+                    const rightOk = (j === n - 1) || categories[j + 1] !== 'CONNECTOR' || (j + 1 === idx);
+                    if (j !== 0 && j !== n - 1 && leftOk && rightOk) { swap(idx, j); swapped = true; break; }
+                }
+                if (!swapped) break; 
+            }
+        }
+
+        function generateRequiredSoundScripts() {
+            const pools = categorizeBaseTokens();
+            const remainingCounts = {};
+            const nextVariantNumbers = {};
+            Object.keys(pacenoteWordVariantCounts).forEach(base => {
+                remainingCounts[base] = pacenoteWordVariantCounts[base];
+                nextVariantNumbers[base] = 1;
+            });
+
+            const connectorPool = pools.CONNECTOR;
+            const contentPools = { DISTANCE: pools.DISTANCE, CORNER: pools.CORNER, DIRECTION: pools.DIRECTION, VOCAB: pools.VOCAB };
+            const pickContentCategory = createCategoryPicker(contentPools);
+
+            const recordedConnectorKeys = [];
+            let reuseCounter = 0;
+
+            function insertConnector(usedInThisScript) {
+                let candidates = connectorPool.filter(t => remainingCounts[t] > 0 && !usedInThisScript.has(t));
+                candidates = candidates.slice().sort((a, b) => {
+                    const diff = remainingCounts[b] - remainingCounts[a];
+                    return diff !== 0 ? diff : deterministicTieBreak(a, b);
+                });
+
+                if (candidates.length > 0) {
+                    const baseToken = candidates[0];
+                    remainingCounts[baseToken]--;
+                    const variantNum = nextVariantNumbers[baseToken]++;
+                    const key = `${baseToken}${variantNum}`;
+                    usedInThisScript.add(baseToken);
+                    recordedConnectorKeys.push({ key, baseToken });
+                    return { key, baseToken };
+                }
+                if (recordedConnectorKeys.length === 0) return null; 
+                const picked = recordedConnectorKeys[reuseCounter % recordedConnectorKeys.length];
+                reuseCounter++;
+                return picked;
+            }
+
+            const CHUNK_PATTERN = [2, 3, 2, 4, 3, 2, 3];
+            let chunkIdx = 0;
+
+            const scripts = [];
+            const totalContentSlotsNeeded = Object.keys(remainingCounts)
+                .filter(k => !connectorPool.includes(k))
+                .reduce((sum, k) => sum + remainingCounts[k], 0);
+            const maxScripts = totalContentSlotsNeeded + 400; 
+            let guard = 0;
+
+            while (Object.keys(remainingCounts).some(k => !connectorPool.includes(k) && remainingCounts[k] > 0) && guard < maxScripts) {
+                guard++;
+                const usedInThisScript = new Set();
+                const categories = [];
+                const tokens = [];
+                const display = [];
+                let contentSinceConnector = 0;
+                let chunkTarget = CHUNK_PATTERN[chunkIdx % CHUNK_PATTERN.length];
+
+                while (tokens.length < TARGET_SCRIPT_LENGTH) {
+                    const category = pickContentCategory(remainingCounts, usedInThisScript);
+                    if (!category) break; 
+
+                    const { baseToken, key } = pickNextScriptToken(contentPools, category, remainingCounts, nextVariantNumbers, usedInThisScript);
+                    categories.push(category);
+                    tokens.push(key);
+                    display.push(formatScriptDisplayWord(baseToken, category));
+                    contentSinceConnector++;
+
+                    if (contentSinceConnector >= chunkTarget && tokens.length < TARGET_SCRIPT_LENGTH - 1) {
+                        const picked = insertConnector(usedInThisScript);
+                        if (picked) {
+                            categories.push('CONNECTOR');
+                            tokens.push(picked.key);
+                            display.push(formatScriptDisplayWord(picked.baseToken, 'CONNECTOR'));
+                            contentSinceConnector = 0;
+                            chunkIdx++;
+                            chunkTarget = CHUNK_PATTERN[chunkIdx % CHUNK_PATTERN.length];
+                        }
+                    }
+                }
+
+                fixConnectorPlacement(categories, tokens, display);
+
+                if (tokens.length > 0) {
+                    scripts.push({
+                        tokens,
+                        display,
+                        type: 'pacenote',
+                        context: 'Concatenative pacenote script — read each word as its own distinct beat, these get stitched together in-game.'
+                    });
+                }
+            }
+            return scripts;
+        }
+
+        function generateSpecialCallScripts() {
+            const scripts = [];
+            impactSpeechFiles.forEach(entry => {
+                scripts.push({
+                    tokens: [entry.file],
+                    display: [entry.phrase],
+                    type: 'impact',
+                    context: 'Impact reaction call (Audio/Impact/Speech/) — read as one natural spoken line, right after a hit.'
+                });
+            });
+            gameSpeechFiles.forEach(entry => {
+                scripts.push({
+                    tokens: [entry.file],
+                    display: [entry.phrase],
+                    type: 'game',
+                    context: 'Stage-start call (Audio/Game/) — read as one natural spoken line.'
+                });
+            });
+            numberSpeechFiles.forEach(entry => {
+                scripts.push({
+                    tokens: [entry.file],
+                    display: [entry.phrase],
+                    type: 'number',
+                    context: 'Stage-start countdown (Audio/Speech/Number/) — read as one natural spoken line.'
+                });
+            });
+            return scripts;
+        }
+
+        const concatenativeScripts = generateRequiredSoundScripts().concat(generateSpecialCallScripts());
+
+        // Restored: these two data blocks were missing from this build,
+        // which would have thrown a ReferenceError the first time any
+        // tooltip was shown. Content is the exact, previously-verified set
+        // from the audited v3.0.3 baseline (research-backed definitions,
+        // Five Bales / 90-corner / crests-count fixes all included).
+        const ATOMIC_WORD_DEFINITIONS = {"one":"Severity 1 \u2014 the tightest numbered corner, taken at low speed, sometimes needing the handbrake.","two":"Severity 2 \u2014 a tight corner, slightly more open than a 1.","three":"Severity 3 \u2014 a medium corner, roughly the midpoint of the 1-6 scale.","four":"Severity 4 \u2014 a moderately fast, fairly open corner.","five":"Severity 5 \u2014 a fast, open corner taken with little lift.","six":"Severity 6 \u2014 the fastest numbered corner, close to flat-out.","acute":"An acute corner \u2014 extremely tight, often sharper than a hairpin, frequently where two roads meet at a Y.","hp":"Hairpin \u2014 a corner of roughly 180 degrees, taken carefully at low speed.","square":"Square \u2014 a genuine 90-degree corner, often at a junction.","max":"Maximum/oversquare \u2014 a corner even sharper than square.","open":"Open hairpin \u2014 a hairpin that isn't quite a full 180 degrees, so can be taken a little faster.","flat":"Flat \u2014 the corner can be taken flat-out, without lifting off the throttle or braking.","scale":"A fine-tuning marker on a corner's severity (finer resolution than the plain +/- modifiers).","plus":"A '+' modifier \u2014 slightly faster/more open than the plain numbered severity.","minus":"A '-' modifier \u2014 slightly tighter/slower than the plain numbered severity.","plusplus":"A double '+' modifier \u2014 noticeably more open/faster than the plain severity.","minusminus":"A double '-' modifier \u2014 noticeably tighter/slower than the plain severity.","left":"Indicates the corner or feature is to the left.","right":"Indicates the corner or feature is to the right.","leftish":"Slightly to the left \u2014 a subtle, not sharply defined, left-hand bend.","rightish":"Slightly to the right \u2014 a subtle, not sharply defined, right-hand bend.","middle":"Positions the car in the middle of the road, e.g. 'keep middle'.","keep":"Tells the driver to position the car \u2014 used with left/right/middle/in/out to set up for what follows.","in":"Positions the car toward the inside of the corner (or 'keep in').","out":"Positions the car toward the outside of the corner (or 'keep out').","around":"Go around an obstacle (e.g. 'around bales') rather than over or through it.","into":"Connects two corners with no gap between them \u2014 the driver must already be set up for the next one before finishing this one.","and":"A short conjunction linking two close-together notes, similar to 'into' but with a very brief gap between them.","then":"Sequences two notes one after the other, with a bit more of a gap than 'into'/'and'.","over":"Means the current call spans across a feature \u2014 e.g. 'left 5 over crest' means the corner continues over the top of the crest.","for":"Gives a duration/distance the preceding call applies for, e.g. 'flat for 300'.","through":"The car passes through a feature, e.g. 'through the gate'.","onto":"Marks a transition onto a different road or surface, e.g. 'onto gravel'.","off":"Marks coming off a surface or feature, e.g. an off-camber corner.","at":"Marks the exact position of a hazard or feature, e.g. 'caution at bridge'.","from":"Indicates a change starting from a point, e.g. camber changing from the left.","up":"Indicates an upward direction or distance run, often with 'until'.","until":"Marks a call that continues up to a specified point or distance.","to":"Indicates travelling toward a point, e.g. 'to crest', 'to finish'.","of":"Connecting word within a longer descriptive phrase (e.g. 'out of rut').","on":"Indicates being positioned on a particular surface or line.","short":"A shorter-than-standard section (e.g. a short straight or short corner).","long":"A longer-than-standard section \u2014 factor this into your speed and line.","halflong":"Half-long \u2014 moderately longer than standard, between 'standard' and 'long'.","longlong":"Extra-long \u2014 noticeably longer than a standard 'long' call.","verylong":"Very long \u2014 an unusually extended section.","veryverylong":"Extremely long \u2014 one of the longest section lengths called.","bloodylong":"Emphatically very long \u2014 treat as an extended straight or corner, informal team phrasing.","fuckinglong":"Emphatically (very) long \u2014 informal team phrasing for an extremely extended section.","shortshort":"Extra short \u2014 noticeably shorter than a standard 'short' call.","sharp":"A short, sudden feature \u2014 e.g. a sharp crest or sharp tightening.","immediate":"The next feature comes immediately, with essentially no gap.","directly":"The feature follows directly, with no meaningful gap.","exact":"The marked point is an exact, precise location.","precise":"Indicates precision is needed positioning the car for this call.","tightens":"The corner gets progressively tighter partway through \u2014 don't commit to the initial radius.","opens":"The corner gets progressively more open partway through \u2014 it's faster than it first looks.","doubletightens":"The corner tightens twice in succession \u2014 two separate tightening points.","dont":"Part of 'Don't Cut' \u2014 do not cut across the apex, there's a hazard on the inside.","dontcut":"Don't Cut \u2014 do not cut across the apex of the corner, there's a hazard on the inside edge.","cut":"You can cut across the apex of the corner to straighten your line \u2014 the inside is clear.","early":"The following action (cut, tighten, brake, etc.) happens earlier than the corner's midpoint.","late":"The following action (cut, tighten, brake, etc.) happens later than the corner's midpoint.","lateish":"Slightly late \u2014 the action happens a bit later than the corner's midpoint, but not sharply so.","sudden":"An abrupt corner that changes direction suddenly, sometimes hidden from view.","deceptive":"The corner isn't what it appears to be \u2014 pay extra attention or you may take the wrong line/speed.","unseen":"The corner is hidden from view (behind trees, bushes, or terrain) \u2014 approach with extra care.","twisty":"A section with a series of successive direction changes rather than one clean corner.","turn":"Indicates turning off the current road onto a different one.","curve":"A gentle bend in the road, softer than a numbered corner.","understeer":"Warning that the car may push wide (understeer) through this section.","tight":"A tight, slow section \u2014 similar in spirit to a low-numbered corner.","slight":"A very mild, gentle version of the call it modifies.","abit":"'A bit' \u2014 a mild qualifier softening the call it's attached to.","a":"Used as part of a descriptive phrase (e.g. 'a bit', 'a lot').","bit":"Used in 'a bit' \u2014 a small amount/degree qualifier.","lot":"Used in 'a lot' \u2014 a large amount/degree qualifier.","very":"Intensifier \u2014 makes the following description more extreme (e.g. 'very long').","big":"A larger/more significant version of the feature it modifies (e.g. 'big jump').","small":"A smaller/gentler version of the feature it modifies (e.g. 'small crest').","bad":"Warns that the feature is more severe/hazardous than usual (e.g. 'bad camber').","good":"Reassures that grip/road condition is favourable here.","full":"The full extent of the call applies (e.g. 'full cut' \u2014 cut all the way).","positive":"A reassuring call \u2014 the feature is in your favour (e.g. helps the car rather than hindering it).","negative":"A cautionary call \u2014 the feature works against you (opposite of 'positive').","caution":"A general warning to take extra care through the upcoming section.","cautioncaution":"Double caution \u2014 an elevated warning, more serious than a single caution.","cautioncautioncaution":"Triple caution \u2014 the most serious level of warning, extreme care required.","double":"Indicates the following call applies twice in a row (e.g. double caution, double jump).","triple":"Indicates the following call applies three times in a row (e.g. triple caution).","ditch":"A ditch alongside the road \u2014 a serious hazard if the car runs wide.","rock":"A rock or rocks near the road \u2014 a hazard to avoid clipping.","rocks":"Rocks near the road \u2014 a hazard to avoid clipping.","boulder":"A large rock/boulder near the road \u2014 a serious hazard if hit.","stone":"A stone/rock hazard near the road surface.","rubble":"Loose rubble/debris on the road surface affecting grip.","log":"A log or logs near the road \u2014 avoid clipping them.","logs":"Logs piled near the road \u2014 a serious hazard if hit.","stump":"A tree stump near the road \u2014 a hazard if the car runs wide.","tree":"A tree close to the road \u2014 a serious hazard if the car runs wide.","trees":"Trees close to the road \u2014 a serious hazard if the car runs wide.","bush":"A bush near the road edge \u2014 can obscure vision or mark the road's edge.","fence":"A fence running alongside the road.","guardrail":"A guardrail alongside the road \u2014 solid and unforgiving if hit.","guardrails":"Guardrails alongside the road \u2014 solid and unforgiving if hit.","wall":"A wall close to the road \u2014 an unforgiving hazard if hit.","walls":"Walls close to the road \u2014 an unforgiving hazard if hit.","netting":"Protective netting near the road, often marking a drop or spectator area.","wooden":"Describes a hazard as being made of wood (e.g. 'wooden fence').","post":"A post/marker pole near the road \u2014 a hazard if clipped.","posts":"Posts/marker poles near the road \u2014 a hazard if clipped.","bale":"A single hay bale used to mark or block part of the road.","bales":"Hay bales lining or blocking part of the road, often marking a chicane.","barrel":"A barrel used as a course marker or hazard near the road.","barrels":"Barrels used as course markers or hazards near the road.","tape":"Marking tape indicating the edge of the route or a hazard.","flag":"A marshal or course flag near the road.","banner":"An event banner near/over the road \u2014 can affect sightlines.","sign":"A road sign near the route \u2014 potential hazard if close to the road.","gate":"A gate the road passes through \u2014 often narrows the available width.","grid":"A cattle grid across the road \u2014 very low grip, unsettles the car.","checkpoint":"A time control/checkpoint point along the stage.","island":"A traffic island or similar raised feature in the road.","mast":"A mast or pole near the road \u2014 a fixed hazard if hit.","object":"A generic marker for an unspecified fixed hazard near the road.","thing":"A generic marker for an unspecified feature/hazard near the road.","car":"A parked or stationary vehicle near/on the road \u2014 serious hazard.","house":"A house or building close to the road.","spectators":"Spectators standing near the road \u2014 extra care required.","marshalls":"Course marshals positioned near the road.","roundabout":"The route goes around a roundabout.","donut":"Informal for a roundabout / tight looping turn.","layby":"A lay-by (pull-off area) alongside the road.","curb":"A raised curb at the road edge.","curbside":"Positioned right at the curb/road edge.","sidewalk":"A sidewalk/pavement running alongside the road.","shoulder":"The road shoulder (edge strip) alongside the main surface.","clip":"You can clip (lightly cut across) this point.","hook":"The road hooks \u2014 a sudden change of direction at this point.","hollow":"A hollow/dip in the road surface.","hole":"A pothole or hole in the road surface.","puddle":"Standing water on the road surface.","drain":"A drain or drainage channel crossing/beside the road.","hang":"The road 'hangs' \u2014 an off-camber or awkward-feeling section.","nips":"The road briefly narrows or the line briefly tightens ('nips in').","cramped":"The available road width feels tight/cramped here.","busstop":"A 'bus-stop' chicane \u2014 an artificial chicane made of bale-marked gates.","camber":"The road surface is tilted (cambered) \u2014 affects grip and line through the corner.","badcamber":"A camber tilted the wrong way (away from the corner) \u2014 reduces grip significantly.","surface":"The road surface itself, often followed by a description of how it changes.","change":"The surface or road character changes at this point (e.g. 'surface change').","gravel":"Loose gravel surface \u2014 reduced grip.","loose":"The surface is loose/low-grip here.","dirt":"An unpaved dirt surface.","dirty":"The racing line is dirty (covered in loose material), reducing grip.","mud":"Muddy surface \u2014 significantly reduced grip.","muddy":"Muddy surface \u2014 significantly reduced grip.","wet":"The road surface is wet \u2014 reduced grip.","damp":"The road surface is damp \u2014 slightly reduced grip.","dry":"The road surface is dry with normal grip.","snow":"Snow-covered surface \u2014 very low grip.","ice":"Icy surface \u2014 extremely low grip, treat with great care.","icy":"Icy conditions \u2014 extremely low grip, treat with great care.","black":"Used in 'black ice' \u2014 ice that's hard to see on the road surface.","slush":"Slushy (melting snow) surface \u2014 inconsistent, reduced grip.","slippy":"The surface is slippery \u2014 reduced grip, be smooth with inputs.","grip":"A note about the level of grip available on the surface.","grit":"Gritty surface texture affecting grip.","cobbles":"A cobblestone surface \u2014 bumpy with reduced, inconsistent grip.","concrete":"A concrete surface section.","tarmac":"A paved tarmac/asphalt surface.","narrow":"The road ahead is narrower than normal \u2014 less room to work with.","narrows":"The road narrows ahead \u2014 less room to work with.","narrower":"The road becomes even narrower than the recent surface.","widens":"The road becomes wider ahead \u2014 more room to work with.","wide":"A wide section of road with extra room.","wider":"The road becomes wider than the recent surface.","wideout":"Take a wide line on the exit of this corner.","field":"The road surface transitions onto/alongside an open field.","grass":"The surface transitions onto grass \u2014 very low grip.","road":"Refers to the road itself, often combined with a descriptor (e.g. 'onto big road').","straight":"A straight section of road.","path":"A narrower path-like section of the route.","line":"Refers to the driving line/racing line through a section.","rut":"A rut (groove) worn into the road surface.","ruts":"Ruts (grooves) worn into the road surface.","crest":"A blind rise in the road \u2014 you can't see what's beyond it until you're over it.","crests":"Blind rises in the road, in succession.","brow":"The brow (top) of a hill or rise \u2014 similar to a crest.","jump":"The road launches the car into the air here \u2014 prepare for landing.","dab":"A 'jump maybe' style call \u2014 the car might get light/airborne, but not a full jump.","bump":"A bump in the road that can unsettle the car.","bumps":"Multiple bumps in the road that can unsettle the car.","bumpy":"A generally bumpy stretch of road.","speedbump":"A deliberate speed bump across the road.","dip":"A dip (compression) in the road surface.","dips":"Multiple dips (compressions) in the road surface.","squash":"A compression/dip severe enough it could bottom out (hit the sump of) the car.","sumppu":"Finnish-origin term for a compression/dip that could bottom out (hit the sump of) the car \u2014 same meaning as 'squash'.","drop":"A drop in elevation \u2014 the road falls away here.","drops":"Multiple drops in elevation.","steep":"A steep gradient section.","incline":"An upward-sloping section of road.","slope":"A sloped section of road.","down":"A downward direction/gradient.","overcrest":"The call/hazard continues over the top of the crest.","brake":"Instructs the driver to brake at this point.","brakes":"Refers to the car's brakes (e.g. in a mechanical warning).","braking":"Describes braking behaviour through this section.","handbrake":"Suggests using the handbrake to help rotate the car, typically before a very tight corner.","stop":"Instructs the driver to stop \u2014 typically at the finish or a control point.","finish":"Marks the finish of the stage.","tofinish":"Indicates the section leads directly to the stage finish.","nextlap":"Refers to the next lap of a stage that's run multiple times.","lap":"Refers to a lap of a stage that's run multiple times.","take":"Instructs the driver to take a particular line or action.","speed":"A note about the appropriate speed for this section.","slow":"Instructs the driver to slow down.","slower":"The section requires an even slower speed than expected.","slowing":"The car should be slowing down through this section.","fast":"The section can be taken quickly.","faster":"The section can be taken faster than expected.","gets":"Used with a following word to describe a change (e.g. 'gets faster', 'gets smoother').","smoother":"The road surface becomes smoother ahead.","rougher":"The road surface becomes rougher ahead.","worse":"Conditions (e.g. grip) are getting worse ahead.","better":"Conditions (e.g. grip) are getting better ahead.","engine":"Refers to the car's engine (e.g. in a mechanical warning).","gearbox":"Refers to the car's gearbox (e.g. in a mechanical warning).","steering":"Refers to the car's steering (e.g. in a mechanical warning).","sus":"Short for suspension \u2014 refers to the car's suspension (e.g. in a mechanical warning).","broke":"Indicates a component has broken/failed.","problem":"Signals a developing mechanical problem.","temp":"Short for temperature \u2014 used in warnings about engine/water temperature.","fire":"Warns of a fire \u2014 an emergency mechanical call.","batterys":"Refers to the car's battery (e.g. 'battery's flat').","weve":"Contraction of 'we've', used in status/damage call phrasing.","wv":"Abbreviation of 'we've', used in status/damage call phrasing.","got":"Used in status call phrasing (e.g. 'we've got fire').","lost":"Used in status call phrasing (e.g. 'we've lost brakes').","chicane":"A sequence of closely-spaced corners alternating direction.","dive":"Describes diving into a chicane entry.","entry":"Marks the entry point of a corner or chicane.","exit":"Marks the exit point of a corner or chicane.","first":"Indicates the first of a sequence (e.g. 'first exit').","second":"Indicates the second of a sequence (e.g. 'second exit').","third":"Indicates the third of a sequence (e.g. 'third exit').","fork":"The road forks \u2014 a junction where the route splits.","junction":"A junction where roads meet or cross.","tunnel":"The route passes through a tunnel.","bridge":"The route crosses a bridge.","opening":"An opening/gap in a barrier or hedge line along the road.","watch":"A general alert to watch out for something ahead.","care":"Instructs the driver to take extra care.","brave":"Encourages the driver to commit fully despite an intimidating feature ('be brave').","be":"Used in phrasing like 'be brave' or 'be careful'.","trust":"Encourages the driver to trust the note and commit fully.","remember":"A reminder call, flagging something noted earlier in the stage.","important":"Flags that the following note is especially significant.","patient":"Encourages the driver to be patient (not rush) through this section.","neat":"Encourages a tidy, precise line through this section.","tidy":"Encourages keeping the car clean/centered rather than using the full road width.","easy":"Suggests an easy, relaxed approach to this section.","hard":"Indicates the section should be attacked hard/committedly.","hug":"Instructs hugging (staying close to) one side of the road.","edge":"Refers to the edge of the road or a feature.","near":"Positional descriptor \u2014 close by.","past":"Indicates a feature is just past a reference point.","before":"Indicates a feature comes before a reference point.","after":"Indicates a feature comes after a reference point.","behind":"Indicates a feature is positioned behind another reference point.","between":"Indicates a feature is positioned between two reference points (e.g. 'between bales').","many":"Indicates several repetitions of a hazard/feature.","much":"Used as an intensifier in descriptive phrasing.","again":"Indicates the preceding call/feature repeats.","continues":"Indicates the current call continues on (e.g. 'continues over crest').","done":"Marks that a hazard or section has now passed/ended.","well":"Used in phrasing such as 'well done'.","see":"Refers to visibility/sightline of a feature.","sight":"Refers to the sight distance available (e.g. 'to sight distance').","distance":"Refers to the distance to the next feature.","blind":"The feature can't be seen in advance \u2014 approach with care.","maybe":"Indicates the following effect (e.g. a jump) might or might not happen, depending on speed.","fickle":"Warns the section behaves inconsistently and should be treated cautiously.","split":"Marks a stage split/timing point.","time":"Refers to timing (e.g. a split time point).","times":"Indicates a repeated count (e.g. 'two times dont cut').","walk":"Refers to reconnaissance on foot (walking a section) \u2014 rarely used mid-stage.","draws":"Describes the road drawing (pulling) in a direction.","rotate":"Instructs rotating the car (turning it) at this point.","lift":"Instructs lifting off the throttle.","lifts":"Instructs lifting off the throttle (repeated/plural phrasing).","light":"Indicates the car will feel light (reduced grip/weight) here.","throws":"Describes the road/corner throwing the car off-line if not careful.","shit":"Informal team phrasing flagging a nasty/undesirable section.","white":"Describes the colour of a marker/hazard (e.g. 'at white').","yellow":"Describes the colour of a marker/hazard (e.g. 'at yellow').","green":"Describes the colour of a marker/hazard (e.g. 'at green').","red":"Describes the colour of a marker/hazard (e.g. 'at red').","tires":"Tyres used as a hazard marker along the road edge.","go":"Prefixes an instruction (e.g. 'go narrow', 'go wide', 'go round', 'go straight').","round":"Describes going around a feature (e.g. 'go round').","water":"A water hazard on the road \u2014 a ford, splash, or standing water that will slow the car and reduce visibility.","blue":"Describes the colour of a marker/hazard (e.g. 'at blue').","border":"Marks the border/edge of a hazard area (e.g. 'snow border').","deep":"Indicates the feature (rut, puddle, etc.) is unusually deep.","hill":"Refers to a hill \u2014 used with steep/incline descriptors.","lump":"A lump/raised bump in the road surface.","parts":"Refers to distinct parts/sections of a longer corner (e.g. 'five parts').","rails":"Guard rails or similar barriers alongside the road.","slide":"Warns the car may slide here (low grip / loose surface).","stay":"Instructs the driver to stay in a position (e.g. 'stay in rut', 'stay out').","90":"A 90-degree corner \u2014 equivalent to a square corner in some pace-note systems."};
+        const PHRASE_DEFINITION_OVERRIDES = {"dont_cut":"Don't Cut \u2014 do not cut across the apex, there's a hazard on the inside edge that could seriously damage the car.","open_hp":"Open Hairpin \u2014 a hairpin that isn't quite a full 180 degrees, so it can be carried a bit faster than a standard hairpin.","keep_left":"Keep Left \u2014 position the car toward the left side of the road.","keep_right":"Keep Right \u2014 position the car toward the right side of the road.","keep_middle":"Keep Middle \u2014 position the car in the middle of the road.","keep_in":"Keep In \u2014 position the car toward the inside of the corner.","keep_out":"Keep Out \u2014 position the car toward the outside of the corner.","double_caution":"Double Caution \u2014 an elevated warning, more serious than a single caution.","triple_caution":"Triple Caution \u2014 the most serious level of warning; extreme care required.","square_plus":"Square Plus (oversquare) \u2014 a corner even sharper than a genuine 90-degree square.","hp_plus":"Hairpin Plus \u2014 a hairpin taken slightly faster/more open than a standard hairpin.","bad_camber":"Bad Camber \u2014 the road is tilted away from the corner, significantly reducing grip.","flat_crest":"Flat Crest \u2014 the blind rise ahead can be taken flat-out without lifting.","flat_jump":"Flat Jump \u2014 the car will get airborne here but can still be taken flat-out.","big_jump":"Big Jump \u2014 a substantial jump; the car will be airborne, prepare for a firm landing.","small_jump":"Small Jump \u2014 a minor jump; the car may get slightly light.","jump_maybe":"Jump Maybe \u2014 the car might get airborne here depending on speed, but it's not guaranteed.","long_crest":"Long Crest \u2014 an extended blind rise; stay committed for longer than a standard crest.","small_crest":"Small Crest \u2014 a gentle, minor rise with limited visibility beyond it.","double_crest":"Double Crest \u2014 two blind rises in quick succession.","narrow_bridge":"Narrow Bridge \u2014 a bridge crossing that's narrower than the surrounding road.","narrow_gate":"Narrow Gate \u2014 a gate that's narrower than the surrounding road.","double_jump":"Double Jump \u2014 two jumps in quick succession.","be_brave":"Be Brave \u2014 commit fully through this section despite how intimidating it looks.","dont_cut_early":"Don't Cut Early \u2014 don't cut the apex, and specifically not on the early part of the corner.","dont_cut_late":"Don't Cut Late \u2014 don't cut the apex, and specifically not on the later part of the corner.","go_straight":"Go Straight \u2014 continue straight ahead rather than following the more obvious-looking turn.","go_wide":"Go Wide \u2014 take a wide line through this section.","go_narrow":"Go Narrow \u2014 take a tighter, narrower line through this section.","go_round":"Go Round \u2014 go around this feature rather than through it.","black_ice":"Black Ice \u2014 ice that's hard to see on the road surface; extremely low grip.","over_crest":"Over Crest \u2014 the call continues over the top of the blind rise.","over_jump":"Over Jump \u2014 the call continues over the jump.","over_bridge":"Over Bridge \u2014 the call continues across the bridge.","onto_gravel":"Onto Gravel \u2014 the surface changes to loose gravel here.","onto_tarmac":"Onto Tarmac \u2014 the surface changes to paved tarmac here.","onto_snow":"Onto Snow \u2014 the surface changes to snow here.","onto_ice":"Onto Ice \u2014 the surface changes to ice here; extremely low grip.","surface_change":"Surface Change \u2014 the road surface character changes at this point.","gets_smoother":"Gets Smoother \u2014 the road surface improves and becomes smoother ahead.","gets_rougher":"Gets Rougher \u2014 the road surface deteriorates and becomes rougher ahead.","watch_it":"Watch It \u2014 a sharp, direct alert to be careful right here.","well_done":"Well Done \u2014 an end-of-stage acknowledgement to the driver.","twisty_from_left":"Twisty From Left \u2014 a series of direction changes beginning with a left-hand turn.","twisty_from_right":"Twisty From Right \u2014 a series of direction changes beginning with a right-hand turn.","very_slippy":"Very Slippy \u2014 significantly reduced grip; be smooth with all inputs.","maybe_slippy":"Maybe Slippy \u2014 grip here is uncertain; treat with caution.","steep_drop":"Steep Drop \u2014 a steep fall in elevation immediately off the road edge.","steep_hill":"Steep Hill \u2014 a steeply graded hill section.","steep_incline":"Steep Incline \u2014 a steeply rising section of road.","steep_slope":"Steep Slope \u2014 a steeply angled section of road.","to_sight_distance":"To Sight Distance \u2014 continues up to the limit of visibility.","chicane_left_entry":"Chicane, Left Entry \u2014 a chicane where you enter by turning left first.","chicane_right_entry":"Chicane, Right Entry \u2014 a chicane where you enter by turning right first.","busstop_chicane":"Bus-Stop Chicane \u2014 an artificial chicane formed by bales, like a bus-stop layout.","left_into":"Left, then immediately into the next call with no gap.","right_into":"Right, then immediately into the next call with no gap.","left_over":"A left-hand corner that continues over a feature (crest, jump, etc.).","right_over":"A right-hand corner that continues over a feature (crest, jump, etc.).","left_around":"Curves left around an obstacle or feature.","right_around":"Curves right around an obstacle or feature.","left_entry":"Left Entry \u2014 enter the feature (e.g. a chicane) by turning left first.","right_entry":"Right Entry \u2014 enter the feature (e.g. a chicane) by turning right first.","stay_out_of_rut":"Stay Out of Rut \u2014 keep the car out of the worn groove in the road.","in_and_out":"In and Out \u2014 briefly move toward the inside of the road, then back out again.","deep_rut":"Deep Rut \u2014 an unusually deep groove worn into the road; can catch a wheel.","deep_ruts":"Deep Ruts \u2014 unusually deep grooves worn into the road; can catch a wheel.","two_times_dont":"Two Times Don't Cut \u2014 don't cut the apex; applies at two separate points of this corner.","two_times_dontcut":"Two Times Don't Cut \u2014 don't cut the apex; applies at two separate points of this corner.","three_times_dont":"Three Times Don't Cut \u2014 don't cut the apex; applies at three separate points of this corner.","three_times_dontcut":"Three Times Don't Cut \u2014 don't cut the apex; applies at three separate points of this corner.","double_dont_cut":"Double Don't Cut \u2014 don't cut the apex; this applies twice in the corner.","triple_dont_cut":"Triple Don't Cut \u2014 don't cut the apex; this applies three times in the corner.","double_dont":"Double Don't Cut \u2014 don't cut the apex; this applies twice in the corner.","triple_dont":"Triple Don't Cut \u2014 don't cut the apex; this applies three times in the corner.","water_temp":"Water Temperature \u2014 a mechanical warning that the engine's water temperature is running high.","batterys_flat":"The Battery's Flat \u2014 a mechanical warning that the car's battery has gone flat.","gearbox_broke":"Gearbox Broken \u2014 a mechanical warning that the gearbox has failed.","problem_engine":"Engine Problem \u2014 a mechanical warning that there's an issue with the engine.","steering_broke":"Steering Broken \u2014 a mechanical warning that the steering has failed.","sus_broke":"Suspension Broken \u2014 a mechanical warning that the suspension has failed.","weve_got_fire":"We've Got Fire \u2014 an emergency mechanical warning that the car is on fire.","wv_lost_brakes":"We've Lost the Brakes \u2014 an emergency mechanical warning that the brakes have failed.","two_bales":"Two Bales \u2014 two hay bales lining or blocking part of the road, often marking a chicane.","three_bales":"Three Bales \u2014 three hay bales lining or blocking part of the road, often marking a chicane.","four_bales":"Four Bales \u2014 four hay bales lining or blocking part of the road, often marking a chicane.","five_bales":"Five Bales \u2014 five hay bales lining or blocking part of the road, often marking a chicane.","two_parts":"Two Parts \u2014 the corner is broken into two distinct sections; treat each part on its own rather than as one continuous radius.","three_parts":"Three Parts \u2014 the corner is broken into three distinct sections; treat each part on its own rather than as one continuous radius.","four_parts":"Four Parts \u2014 the corner is broken into four distinct sections; treat each part on its own rather than as one continuous radius.","five_parts":"Five Parts \u2014 the corner is broken into five distinct sections; treat each part on its own rather than as one continuous radius.","over_two_crests":"Over Two Crests \u2014 the road continues over two separate blind rises in succession.","over_three_crests":"Over Three Crests \u2014 the road continues over three separate blind rises in succession."};
+
+        function getCategoryForBase(base) {
+            if (/^\d+_$/.test(base)) return 'DISTANCE';
+            if (CORNER_WORD_SET.has(base)) return 'CORNER';
+            if (DIRECTION_WORD_SET.has(base)) return 'DIRECTION';
+            if (CONNECTOR_WORD_SET.has(base)) return 'CONNECTOR';
+            return 'VOCAB';
+        }
+
+        function getRealWordDefinition(base) {
+            if (/^\d+_$/.test(base)) {
+                const n = parseInt(base, 10);
+                return `Distance call — approximately ${n} meter${n === 1 ? '' : 's'} to the next feature.`;
+            }
+
+            const cleaned = base.replace(/^_+/, '').replace(/_+$/, '');
+            if (PHRASE_DEFINITION_OVERRIDES[cleaned]) return PHRASE_DEFINITION_OVERRIDES[cleaned];
+
+            const parts = cleaned.split('_').filter(Boolean);
+            const labeledDefs = [];
+            parts.forEach(p => {
+                if (ATOMIC_WORD_DEFINITIONS[p]) {
+                    labeledDefs.push({ label: p, def: ATOMIC_WORD_DEFINITIONS[p] });
+                } else if (/^\d+$/.test(p)) {
+                    const n = parseInt(p, 10);
+                    labeledDefs.push({ label: p, def: `A distance of approximately ${n} meter${n === 1 ? '' : 's'}.` });
+                }
+            });
+
+            if (labeledDefs.length === 0) return 'No documented definition available for this word.';
+            if (labeledDefs.length === 1) return labeledDefs[0].def;
+            return labeledDefs.map(ld => `<strong>${ld.label}:</strong> ${ld.def}`).join('<br><br>');
+        }
+
+        function getReadingGuidance(base, category) {
+            const cleaned = base.replace(/^_+/, '').replace(/_+$/, '');
+
+            if (/fire|lost_brakes|wv_lost|weve_got/.test(cleaned)) {
+                return { severity: 'urgent', text: "Say this loudly, quickly, and clearly. Safety-critical, no hesitation." };
+            }
+            if (/batterys_flat|gearbox_broke|problem_engine|steering_broke|sus_broke|water_temp/.test(cleaned)) {
+                return { severity: 'firm', text: "Clear and matter-of-fact — a diagnostic status report, not a road hazard. Stay calm but make sure it's heard." };
+            }
+            if (/cautioncautioncaution|triple_caution/.test(cleaned)) {
+                return { severity: 'urgent', text: "Highest urgency — raise your voice and pick up the pace. The most serious warning level." };
+            }
+            if (/cautioncaution|double_caution/.test(cleaned)) {
+                return { severity: 'elevated', text: "Sharper and more emphatic than a plain caution." };
+            }
+            if (/caution/.test(cleaned)) {
+                return { severity: 'elevated', text: "Clear and attention-grabbing, but not panicked." };
+            }
+            if (/dontcut|dont_cut|^dont$/.test(cleaned)) {
+                return { severity: 'firm', text: "A safety instruction. Don't rush it; let each word land clearly." };
+            }
+            if (/brave|trust/.test(cleaned)) {
+                return { severity: 'warm', text: "Said to encourage full commitment, reassuring not stern." };
+            }
+            if (/unseen|blind|deceptive|fickle/.test(cleaned)) {
+                return { severity: 'firm', text: "Deliberate, slightly cautious tone — flags something the driver can't verify by sight." };
+            }
+            if (/tightens/.test(cleaned)) {
+                return { severity: 'neutral', text: "Let your pitch fall slightly as you say it, mirroring the corner tightening. Keep it brief." };
+            }
+            if (/opens/.test(cleaned)) {
+                return { severity: 'neutral', text: "Let your tone lift and relax slightly, mirroring the corner opening up." };
+            }
+            if (/^keep/.test(cleaned)) {
+                return { severity: 'neutral', text: "Calm, instructive tone — a positioning note, not urgent." };
+            }
+            if (/handbrake|brake/.test(cleaned)) {
+                return { severity: 'firm', text: "Sharp and decisive — an action cue where exact timing matters." };
+            }
+            if (category === 'DISTANCE') {
+                return { severity: 'neutral', text: "Flat, even delivery — just state the number clearly at a steady pace, no emotion needed." };
+            }
+            if (category === 'CORNER') {
+                return { severity: 'neutral', text: "State with confidence and clarity — the driver commits to this immediately, so keep it short and clean." };
+            }
+            if (category === 'DIRECTION') {
+                return { severity: 'neutral', text: "Quick and crisp — this usually leads the call, so don't drag it out." };
+            }
+            if (category === 'CONNECTOR') {
+                return { severity: 'neutral', text: "Light and fast — a linking word. Don't pause on it, keep the flow moving into the next call." };
+            }
+            if (/rock|ditch|water|tree|fence|wall|log|bale|guardrail|stone|boulder|rubble|hole|drain/.test(cleaned)) {
+                return { severity: 'elevated', text: "Clear and attentive — this flags a real hazard near the road." };
+            }
+            if (/gravel|mud|snow|ice|slush|wet|damp|dirt|cobbles|tarmac|slippy|grip/.test(cleaned)) {
+                return { severity: 'neutral', text: "Matter-of-fact, informative tone — describes the surface, not an emergency." };
+            }
+            const cleanedParts = cleaned.split('_');
+            const hasCornerShape = cleanedParts.some(p => CORNER_SHAPE_WORDS.has(p));
+            const hasCornerContext = cleanedParts.some(p => ['left', 'right', 'plus', 'scale'].includes(p));
+            if (hasCornerShape && hasCornerContext) {
+                return { severity: 'neutral', text: "State with confidence and clarity — the driver commits to this immediately, so keep it short and clean." };
+            }
+            return { severity: 'neutral', text: "Read in a clear, steady, matter-of-fact tone — a descriptive note, not an urgent one." };
+        }
+
+        function getReadingGuidanceForPhrase(phrase) {
+            const lower = phrase.toLowerCase();
+            if (lower.includes('fire') || lower.includes('brakes')) return { severity: 'urgent', text: "Shout this clearly, safety-critical." };
+            if (lower.includes('oh no') || lower.includes('ugh')) return { severity: 'neutral', text: "A genuine, in-the-moment reaction — let it sound natural, not scripted." };
+            if (lower.includes('watch it')) return { severity: 'elevated', text: "Sharp and alert — a quick warning right after a scare." };
+            if (lower.includes('go')) return { severity: 'warm', text: "Energetic and decisive — this kicks off the stage." };
+            if (/^(one|two|three)$/i.test(phrase.trim())) return { severity: 'neutral', text: "Crisp and evenly paced — part of a countdown, keep it steady." };
+            return { severity: 'neutral', text: "Deliver naturally, as a genuine spoken reaction." };
+        }
+
+        function getSeverityForTokenKey(tokenKey) {
+            if (!tokenKey) return 'neutral';
+            if (tokenKey.includes('.')) {
+                const entry = [...impactSpeechFiles, ...gameSpeechFiles, ...numberSpeechFiles].find(e => e.file === tokenKey);
+                return entry ? getReadingGuidanceForPhrase(entry.phrase).severity : 'neutral';
+            }
+            const match = tokenKey.match(/^(.*?)(\d+)$/);
+            if (!match) return 'neutral';
+            const base = match[1];
+            return getReadingGuidance(base, getCategoryForBase(base)).severity;
+        }
+
+        function attachWordUsageHover(el, tokenKey) {
+            if (!tokenKey) return;
+            let base = null;
+            let specialPhrase = null;
+
+            if (tokenKey.includes('.')) {
+                const entry = [...impactSpeechFiles, ...gameSpeechFiles, ...numberSpeechFiles].find(e => e.file === tokenKey);
+                if (!entry) return;
+                specialPhrase = entry.phrase;
+            } else {
+                const match = tokenKey.match(/^(.*?)(\d+)$/);
+                if (!match) return;
+                base = match[1];
+            }
+
+            el.addEventListener('mouseenter', (evt) => showWordUsageTooltip(evt, base, specialPhrase, tokenKey));
+            el.addEventListener('mousemove', (evt) => moveWordUsageTooltip(evt));
+            el.addEventListener('mouseleave', hideWordUsageTooltip);
+
+            el.addEventListener('touchstart', (evt) => {
+                const touch = evt.touches[0];
+                if (!touch) return;
+                const fakeEvt = { clientX: touch.clientX, clientY: touch.clientY };
+                const tooltip = document.getElementById('word-usage-tooltip');
+                const alreadyShowingThis = tooltip && tooltip.classList.contains('visible') && tooltip.dataset.forToken === tokenKey;
+                if (alreadyShowingThis) {
+                    hideWordUsageTooltip();
+                } else {
+                    showWordUsageTooltip(fakeEvt, base, specialPhrase, tokenKey);
+                    if (tooltip) tooltip.dataset.forToken = tokenKey;
+                }
+            }, { passive: true });
+        }
+
+        function showWordUsageTooltip(evt, base, specialPhrase, tokenKey) {
+            const tooltip = document.getElementById('word-usage-tooltip');
+            if (!tooltip) return;
+
+            let title, guidance, definition;
+            if (specialPhrase) {
+                title = specialPhrase;
+                guidance = getReadingGuidanceForPhrase(specialPhrase);
+                definition = 'A standalone spoken line — not built from smaller words.';
+            } else {
+                const category = getCategoryForBase(base);
+                title = formatScriptDisplayWord(base, category);
+                guidance = getReadingGuidance(base, category);
+                definition = getRealWordDefinition(base);
+            }
+
+            let qualityHtml = '';
+            let waveformHtml = '';
+            const buffer = tokenKey ? capturedAudioBuffers[tokenKey] : null;
+            if (buffer) {
+                const quality = audioQualityFlags[tokenKey];
+                if (quality && quality.silent) {
+                    qualityHtml = `<div class="usage-quality quality-bad">🔇 Likely silent — very low peak level. Check the mic and consider re-recording.</div>`;
+                } else if (quality && quality.clipped) {
+                    qualityHtml = `<div class="usage-quality quality-bad">⚠️ Likely clipped — input hit the ceiling. Consider lowering gain and re-recording.</div>`;
+                } else {
+                    qualityHtml = `<div class="usage-quality quality-ok">✓ Levels look clean (peak ${(quality ? quality.peak : 0).toFixed(2)})</div>`;
+                }
+                waveformHtml = `<canvas class="usage-waveform" id="usage-waveform-canvas" width="276" height="40"></canvas>`;
+            }
+
+            tooltip.innerHTML = `<div class="usage-title">${title}</div>` +
+                `<div class="usage-howto severity-${guidance.severity}"><span class="usage-howto-label">How to read it</span>${guidance.text}</div>` +
+                qualityHtml + waveformHtml +
+                `<div class="usage-definition"><span class="usage-def-label">What it means</span>${definition}</div>`;
+            tooltip.classList.add('visible');
+            positionWordUsageTooltip(evt, tooltip);
+            if (buffer) drawWaveformPreview(buffer);
+        }
+
+        function drawWaveformPreview(buffer) {
+            const canvas = document.getElementById('usage-waveform-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = 'rgba(74,85,104,0.25)';
+            ctx.fillRect(0, 0, w, h);
+
+            const data = buffer.getChannelData(0);
+            const step = Math.max(1, Math.floor(data.length / w));
+            const mid = h / 2;
+            ctx.strokeStyle = '#63b3ed';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let x = 0; x < w; x++) {
+                const start = x * step;
+                let min = 1, max = -1;
+                for (let i = 0; i < step && start + i < data.length; i++) {
+                    const v = data[start + i];
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+                if (min > max) { min = 0; max = 0; }
+                ctx.moveTo(x, mid + min * mid);
+                ctx.lineTo(x, mid + max * mid);
+            }
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(160,174,192,0.3)';
+            ctx.beginPath();
+            ctx.moveTo(0, mid);
+            ctx.lineTo(w, mid);
+            ctx.stroke();
+        }
+
+        function moveWordUsageTooltip(evt) {
+            const tooltip = document.getElementById('word-usage-tooltip');
+            if (tooltip && tooltip.classList.contains('visible')) positionWordUsageTooltip(evt, tooltip);
+        }
+
+        function hideWordUsageTooltip() {
+            const tooltip = document.getElementById('word-usage-tooltip');
+            if (tooltip) { tooltip.classList.remove('visible'); delete tooltip.dataset.forToken; }
+        }
+
+        document.addEventListener('touchstart', (evt) => {
+            if (!evt.target.closest('.script-span, .matrix-item')) hideWordUsageTooltip();
+        }, { passive: true });
+
+        function positionWordUsageTooltip(evt, tooltip) {
+            const pad = 16;
+            let x = evt.clientX + pad;
+            let y = evt.clientY + pad;
+            const maxX = window.innerWidth - 320;
+            const maxY = window.innerHeight - 160;
+            if (x > maxX) x = Math.max(8, maxX);
+            if (y > maxY) y = Math.max(8, maxY);
+            tooltip.style.left = `${x}px`;
+            tooltip.style.top = `${y}px`;
+        }
+
+        function renderTokenMatrixGrid() {
+            const container = document.getElementById('token-matrix-mesh');
+            if (!container) return; 
+            container.innerHTML = '';
+            const impactFileSet = new Set(impactSpeechFiles.map(e => e.file));
+            const miscFileSet = new Set([...gameSpeechFiles, ...numberSpeechFiles].map(e => e.file));
+            completeSoundManifest.forEach(fileKey => {
+                const div = document.createElement('div');
+                div.id = `matrix-cell-${fileKey}`;
+                div.className = 'matrix-item';
+                if (impactFileSet.has(fileKey)) { div.classList.add('matrix-item-impact'); }
+                else if (miscFileSet.has(fileKey)) { div.classList.add('matrix-item-bonusword'); }
+                if (capturedAudioBuffers[fileKey]) div.classList.add('recorded');
+                if (activeTargetFileKey === fileKey && currentWorkflowMode === 'target') div.classList.add('active-target');
+
+                const quality = audioQualityFlags[fileKey];
+                let label = fileKey.includes('.') ? fileKey : `${fileKey}.ogg`;
+                if (quality && (quality.silent || quality.clipped)) {
+                    div.classList.add('quality-warning');
+                    const badge = quality.silent ? '🔇' : '⚠️';
+                    label = `${badge} ${label}`;
+                }
+                div.innerText = label;
+
+                div.onclick = () => { if(currentWorkflowMode === 'target') selectActiveTargetToken(fileKey); };
+                attachWordUsageHover(div, fileKey);
+                container.appendChild(div);
+            });
+        }
+
+        function switchWorkflowMode(mode) {
+            currentWorkflowMode = mode;
+            const tabScript = document.getElementById('tab-script');
+            const tabTarget = document.getElementById('tab-target');
+            if(tabScript) tabScript.classList.toggle('active', mode === 'script');
+            if(tabTarget) tabTarget.classList.toggle('active', mode === 'target');
+            
+            const nextBtn = document.getElementById('next-script-btn');
+            const prevBtn = document.getElementById('prev-script-btn');
+
+            if (mode === 'script') {
+                if(nextBtn) nextBtn.style.display = 'inline-block';
+                if (prevBtn) prevBtn.style.display = 'inline-block';
+                loadScriptIndex(currentScriptIndex);
+            } else {
+                if(nextBtn) nextBtn.style.display = 'none';
+                if (prevBtn) prevBtn.style.display = 'none';
+                const progressLabel = document.getElementById('script-progress-label');
+                if (progressLabel) progressLabel.innerText = '';
+                const contextLabel = document.getElementById('script-context-label');
+                if (contextLabel) contextLabel.style.display = 'none';
+                if(activeTargetFileKey) selectActiveTargetToken(activeTargetFileKey);
+                else {
+                    const tokenDisplay = document.getElementById('target-token-display');
+                    if(tokenDisplay) tokenDisplay.innerText = "SELECT TARGET GRID FILE ELEMENT";
+                }
+            }
+            renderTokenMatrixGrid();
+        }
+
+        function loadScriptIndex(idx) {
+            currentScriptIndex = idx;
+            const currentScript = concatenativeScripts[currentScriptIndex % concatenativeScripts.length];
+            if(!currentScript) return;
+            const scriptNum = (currentScriptIndex % concatenativeScripts.length) + 1;
+            const lapNum = Math.floor(currentScriptIndex / concatenativeScripts.length) + 1;
+            const typeIcon = { pacenote: '🗣️', impact: '💥', game: '🏁', number: '🔢' }[currentScript.type] || '🗣️';
+            const progressLabel = document.getElementById('script-progress-label');
+            if (progressLabel) {
+                progressLabel.innerText = lapNum > 1
+                    ? `${typeIcon} Script ${scriptNum} of ${concatenativeScripts.length} (pass ${lapNum} — all required sounds already covered once)`
+                    : `${typeIcon} Script ${scriptNum} of ${concatenativeScripts.length} — auto-generated to cover every required sound`;
+            }
+            const contextLabel = document.getElementById('script-context-label');
+            if (contextLabel) {
+                if (currentScript.context) {
+                    contextLabel.innerText = currentScript.context;
+                    contextLabel.style.display = 'inline';
+                } else {
+                    contextLabel.style.display = 'none';
+                }
+            }
+            const prevBtn = document.getElementById('prev-script-btn');
+            if (prevBtn) prevBtn.disabled = (currentScriptIndex <= 0);
+            const container = document.getElementById('target-token-display');
+            if (container) {
+                container.innerHTML = '';
+                singleTokenRerecordTarget = null; 
+
+                currentScript.display.forEach((wordText, wordIdx) => {
+                    const span = document.createElement('span');
+                    span.id = `script-word-${wordIdx}`;
+                    span.className = `script-span severity-${getSeverityForTokenKey(currentScript.tokens[wordIdx])}`;
+                    span.innerText = wordText;
+
+                    const tokenKey = currentScript.tokens[wordIdx];
+                    if (capturedAudioBuffers[tokenKey]) {
+                        span.classList.add('extracted');
+                        span.title = 'Click to re-record just this one';
+                        span.onclick = () => handleScriptWordClick(tokenKey, wordIdx);
+                    }
+                    attachWordUsageHover(span, tokenKey);
+
+                    container.appendChild(span);
+
+                    if (wordIdx < currentScript.display.length - 1) {
+                        const arrow = document.createElement('span');
+                        arrow.className = 'script-arrow';
+                        arrow.innerText = '->';
+                        container.appendChild(arrow);
+                    }
+                });
+            }
+
+            updateNextButtonAvailability();
+        }
+
+        function updateNextButtonAvailability() {
+            const nextBtn = document.getElementById('next-script-btn');
+            if (!nextBtn) return;
+            if (currentWorkflowMode !== 'script') { nextBtn.disabled = false; nextBtn.title = ''; return; }
+            const currentScript = concatenativeScripts[currentScriptIndex % concatenativeScripts.length];
+            const allRecorded = currentScript.tokens.every(t => !!capturedAudioBuffers[t]);
+            nextBtn.disabled = !allRecorded;
+            nextBtn.title = allRecorded ? '' : 'Record every word in this script (all green) before continuing';
+        }
+
+        function handleScriptWordClick(tokenKey, wordIdx) {
+            playSingleTokenAudio(tokenKey, `script-word-${wordIdx}`);
+            toggleSingleTokenRerecordArmed(tokenKey, wordIdx);
+        }
+
+        function toggleSingleTokenRerecordArmed(tokenKey, wordIdx) {
+            if (!audioRecorder) { logToConsole('Initialize the microphone first.'); return; }
+
+            const alreadyArmedForThis = singleTokenRerecordTarget && singleTokenRerecordTarget.key === tokenKey;
+            document.querySelectorAll('.script-span.rerecord-armed').forEach(el => el.classList.remove('rerecord-armed'));
+
+            if (alreadyArmedForThis) {
+                singleTokenRerecordTarget = null;
+                logToConsole(`Cancelled re-record arm for: ${tokenKey}`);
+                return;
+            }
+
+            singleTokenRerecordTarget = { key: tokenKey, wordIdx };
+            const el = document.getElementById(`script-word-${wordIdx}`);
+            if (el) el.classList.add('rerecord-armed');
+            const startBtn = document.getElementById('start-rec-btn');
+            if (startBtn) startBtn.disabled = false;
+            logToConsole(`Armed to re-record just "${tokenKey}" — press Start Recording (click the word again to cancel).`);
+        }
+
+        function advanceToNextScriptPrompt() {
+            if (currentWorkflowMode !== 'script') return;
+            const currentScript = concatenativeScripts[currentScriptIndex % concatenativeScripts.length];
+            const allRecorded = currentScript.tokens.every(t => !!capturedAudioBuffers[t]);
+            if (!allRecorded) {
+                logToConsole("Every word in this script needs to be green before moving on.");
+                return;
+            }
+            currentScriptIndex++;
+            loadScriptIndex(currentScriptIndex);
+        }
+
+        function goToPreviousScriptPrompt() {
+            if (currentWorkflowMode !== 'script') return;
+            if (currentScriptIndex <= 0) {
+                logToConsole("Already at the first script — nothing before this to go back to.");
+                return;
+            }
+            currentScriptIndex--;
+            loadScriptIndex(currentScriptIndex);
+        }
+
+        function selectActiveTargetToken(fileKey) {
+            if (activeTargetFileKey) {
+                const old = document.getElementById(`matrix-cell-${activeTargetFileKey}`);
+                if (old) old.classList.remove('active-target');
+            }
+            activeTargetFileKey = fileKey;
+            
+            const container = document.getElementById('target-token-display');
+            if (container) {
+                container.innerHTML = '';
+                const span = document.createElement('span');
+                span.className = `script-span extracted severity-${getSeverityForTokenKey(fileKey)}`;
+                span.innerText = `${fileKey.toUpperCase()}.OGG`;
+                attachWordUsageHover(span, fileKey);
+                container.appendChild(span);
+            }
+            
+            const cell = document.getElementById(`matrix-cell-${fileKey}`);
+            if (cell) cell.classList.add('active-target');
+            const startBtn = document.getElementById('start-rec-btn');
+            if (audioRecorder && startBtn) startBtn.disabled = false;
+        }
+
+        async function initAudioContext() {
+            try {
+                const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioCtxClass({ sampleRate: 44100 });
+
+                // Stop any previously active stream first, so switching
+                // microphones doesn't leave the old device connection open.
+                if (window.activeStream) {
+                    window.activeStream.getTracks().forEach(track => track.stop());
+                }
+
+                const micSelectEl = document.getElementById('mic-select');
+                const micId = micSelectEl ? micSelectEl.value : '';
+                const audioConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+                if (micId) audioConstraints.deviceId = { exact: micId };
+
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+                window.activeStream = stream;
+                
+                audioRecorder = new MediaRecorder(stream);
+                audioRecorder.ondataavailable = (e) => { if (e.data.size > 0) capturedChunks.push(e.data); };
+                audioRecorder.onstop = processIncomingAudioPipeline;
+
+                const statusEl = document.getElementById('mic-status');
+                if (statusEl) {
+                    statusEl.innerText = "Status: Online (Hardware Bound)";
+                    statusEl.style.color = "#48bb78";
+                }
+                const initBtn = document.getElementById('mic-init-btn');
+                if (initBtn) initBtn.style.display = "none";
+                
+                const recBtn = document.getElementById('start-rec-btn');
+                if (recBtn) {
+                    recBtn.disabled = false;
+                    recBtn.style.background = "#e53e3e";
+                }
+                
+                loadScriptIndex(currentScriptIndex);
+                checkLocalStorageMetadata();
+            } catch (err) {
+                logToConsole(`Hardware Error: ${err.message}`);
+                const statusEl = document.getElementById('mic-status');
+                if (statusEl) {
+                    statusEl.innerText = `Error: ${err.message}`;
+                    statusEl.style.color = "#e53e3e";
+                }
+            }
+        }
+
+        function engageAcquisitionCycle() {
+            if (!audioRecorder) return;
+            if (!singleTokenRerecordTarget) {
+                const tokens = (currentWorkflowMode === 'script') 
+                    ? concatenativeScripts[currentScriptIndex % concatenativeScripts.length].tokens.map(key => ({ key }))
+                    : [{ key: activeTargetFileKey }];
+                    
+                if (capturedAudioBuffers[tokens[0].key]) {
+                    if (!confirm("This script has existing recordings. Clear them and re-record?")) {
+                        return;
+                    }
+                    clearCurrentScriptHighlights();
+                }
+            }
+            
+            const durInput = document.getElementById('countdown-duration');
+            const preRoll = durInput ? parseFloat(durInput.value) : 0;
+            let rem = preRoll;
+            const disp = document.getElementById('countdown-label');
+            
+            const startBtn = document.getElementById('start-rec-btn');
+            const stopBtn = document.getElementById('stop-rec-btn');
+            const recBox = document.getElementById('recording-box');
+            const cdOverlay = document.getElementById('countdown-overlay');
+
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = false;
+            if (recBox) recBox.classList.add('active');
+            if (cdOverlay) cdOverlay.classList.add('active');
+            
+            startBeatAnimation();
+
+            if (rem > 0) {
+                if (disp) disp.innerText = rem.toFixed(1);
+                countdownIntervalId = setInterval(() => {
+                    rem -= 0.1;
+                    if (rem <= 0) {
+                        clearInterval(countdownIntervalId);
+                        if (disp) disp.innerText = "REC";
+                        executeRecorderStart();
+                    } else { 
+                        if (disp) disp.innerText = rem.toFixed(1); 
+                    }
+                }, 100);
+            } else {
+                if (disp) disp.innerText = "REC";
+                executeRecorderStart();
+            }
+        }
+
+        function executeRecorderStart() {
+            capturedChunks = [];
+            audioRecorder.start();
+            const cdOverlay = document.getElementById('countdown-overlay');
+            if (cdOverlay) cdOverlay.classList.remove('active');
+        }
+
+        function updateBeatTempo() {
+            const paceInput = document.getElementById('beat-pace-input');
+            const wpm = paceInput ? (parseFloat(paceInput.value) || 120) : 120;
+            const valLabel = document.getElementById('beat-pace-val');
+            if (valLabel) valLabel.innerText = `${wpm} wpm`;
+            const secondsPerWord = 60 / Math.max(30, wpm);
+            const fullCycleSeconds = secondsPerWord * 4;
+            document.documentElement.style.setProperty('--beat-duration', `${fullCycleSeconds.toFixed(3)}s`);
+        }
+
+        function startBeatAnimation() {
+            updateBeatTempo();
+            const bar = document.getElementById('beat-bar');
+            if (bar) bar.classList.add('beat-active');
+        }
+
+        function stopBeatAnimation() {
+            const bar = document.getElementById('beat-bar');
+            if (bar) bar.classList.remove('beat-active');
+        }
+
+        function terminateAcquisitionCycle() {
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            if (audioRecorder && audioRecorder.state !== "inactive") audioRecorder.stop();
+            
+            const stopBtn = document.getElementById('stop-rec-btn');
+            const recBox = document.getElementById('recording-box');
+            const cdLabel = document.getElementById('countdown-label');
+            const cdOverlay = document.getElementById('countdown-overlay');
+            const startBtn = document.getElementById('start-rec-btn');
+
+            if (stopBtn) stopBtn.disabled = true;
+            if (recBox) recBox.classList.remove('active');
+            if (cdLabel) cdLabel.innerText = "0.0";
+            if (cdOverlay) cdOverlay.classList.remove('active');
+            if (startBtn) startBtn.disabled = false;
+            stopBeatAnimation();
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (!audioContext) {
+                const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioCtxClass({ sampleRate: 44100 });
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                audioContext.decodeAudioData(e.target.result, function(decodedBuffer) {
+                    if (currentWorkflowMode === 'target') {
+                        if (!activeTargetFileKey) return;
+                        recordBufferForKey(activeTargetFileKey, trimSingleBuffer(decodedBuffer));
+                    } else {
+                        sliceScriptBufferBlocks(decodedBuffer);
+                    }
+                    updateMasterProgressMetrics();
+                    renderTokenMatrixGrid();
+                    saveStudioSessionToStorage(true);
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function processIncomingAudioPipeline() {
+            const rawBlob = new Blob(capturedChunks, { type: audioRecorder.mimeType || 'audio/webm' });
+            const arrBuf = await rawBlob.arrayBuffer();
+            audioContext.decodeAudioData(arrBuf, function(decodedBuffer) {
+                if (singleTokenRerecordTarget) {
+                    const { key, wordIdx } = singleTokenRerecordTarget;
+                    recordBufferForKey(key, trimSingleBuffer(decodedBuffer));
+                    const el = document.getElementById(`script-word-${wordIdx}`);
+                    if (el) {
+                        el.classList.add('extracted');
+                        el.classList.remove('rerecord-armed');
+                        el.title = 'Click to re-record just this one';
+                        el.onclick = () => handleScriptWordClick(key, wordIdx);
+                    }
+                    logToConsole(`Re-recorded single token: ${key}`);
+                    singleTokenRerecordTarget = null;
+                } else if (currentWorkflowMode === 'target') {
+                    if (!activeTargetFileKey) return;
+                    recordBufferForKey(activeTargetFileKey, trimSingleBuffer(decodedBuffer));
+                } else {
+                    sliceScriptBufferBlocks(decodedBuffer);
+                }
+                updateMasterProgressMetrics();
+                renderTokenMatrixGrid();
+                updateNextButtonAvailability();
+                saveStudioSessionToStorage(true);
+            });
+        }
+
+        function analyzeBufferQuality(buffer) {
+            const data = buffer.getChannelData(0);
+            let peak = 0;
+            let clippedSamples = 0;
+            for (let i = 0; i < data.length; i++) {
+                const abs = Math.abs(data[i]);
+                if (abs > peak) peak = abs;
+                if (abs >= 0.985) clippedSamples++;
+            }
+            const clippedRatio = data.length > 0 ? clippedSamples / data.length : 0;
+            return {
+                peak,
+                silent: peak < 0.02,
+                clipped: clippedRatio > 0.001
+            };
+        }
+
+        function normalizeAudioBuffer(audioBuffer, targetMax = 0.95, noiseFloorThreshold = 0.05) {
+            const numberOfChannels = audioBuffer.numberOfChannels;
+            let maxVal = 0;
+
+            for (let channel = 0; channel < numberOfChannels; channel++) {
+                const channelData = audioBuffer.getChannelData(channel);
+                for (let i = 0; i < channelData.length; i++) {
+                    const absVal = Math.abs(channelData[i]);
+                    if (absVal > maxVal) maxVal = absVal;
+                }
+            }
+
+            if (maxVal > noiseFloorThreshold && maxVal !== targetMax) {
+                const gain = targetMax / maxVal;
+                for (let channel = 0; channel < numberOfChannels; channel++) {
+                    const channelData = audioBuffer.getChannelData(channel);
+                    for (let i = 0; i < channelData.length; i++) {
+                        channelData[i] *= gain;
+                    }
+                }
+            }
+            return audioBuffer;
+        }
+
+        function recordBufferForKey(key, buffer) {
+            // Quality must be measured on the buffer AFTER normalization,
+            // since that's what actually gets stored and exported - checking
+            // the pre-normalization buffer would show stale peak/clipping
+            // info that no longer matches the real audio (e.g. a quiet take
+            // that gets boosted to a healthy level would still show its old,
+            // misleadingly-low peak reading).
+            const normalizedBuffer = normalizeAudioBuffer(buffer, 0.95);
+            const quality = analyzeBufferQuality(normalizedBuffer);
+
+            capturedAudioBuffers[key] = normalizedBuffer;
+            audioQualityFlags[key] = quality; 
+            
+            return normalizedBuffer;
+        }
+
+        function trimSingleBuffer(buffer) {
+            const data = buffer.getChannelData(0);
+            const windowSize = Math.floor(buffer.sampleRate * 0.005); 
+            let startSample = 0, endSample = data.length - 1;
+
+            for (let w = 0; w < Math.floor(data.length / windowSize); w++) {
+                let sumSq = 0; let offset = w * windowSize;
+                for (let i = 0; i < windowSize; i++) sumSq += data[offset + i] * data[offset + i];
+                if (Math.sqrt(sumSq / windowSize) > silenceThresholdLimit) {
+                    startSample = Math.max(0, offset); 
+                    break;
+                }
+            }
+            for (let w = Math.floor(data.length / windowSize) - 1; w >= 0; w--) {
+                let sumSq = 0; let offset = w * windowSize;
+                for (let i = 0; i < windowSize; i++) sumSq += data[offset + i] * data[offset + i];
+                if (Math.sqrt(sumSq / windowSize) > silenceThresholdLimit) {
+                    endSample = Math.min(data.length - 1, offset + windowSize); 
+                    break;
+                }
+            }
+            
+            const len = Math.max(0, (endSample - startSample) + 1);
+            const out = audioContext.createBuffer(1, len, buffer.sampleRate);
+            out.getChannelData(0).set(data.subarray(startSample, endSample + 1));
+            return out;
+        }
+
+        function sliceScriptBufferBlocks(buffer) {
+            const data = buffer.getChannelData(0);
+            const sampleRate = buffer.sampleRate;
+            const windowSize = Math.floor(sampleRate * 0.01); 
+            const minSilenceWindows = Math.floor((minSilenceDurationMs / 1000) / 0.01); 
+
+            let segments = [];
+            let inSound = false; let soundStartWindow = 0; let silenceCounter = 0;
+            const activeScriptTargets = concatenativeScripts[currentScriptIndex % concatenativeScripts.length].tokens;
+
+            for (let w = 0; w < Math.floor(data.length / windowSize); w++) {
+                let sumSquares = 0; let offset = w * windowSize;
+                for (let i = 0; i < windowSize; i++) sumSquares += data[offset + i] * data[offset + i];
+                let rms = Math.sqrt(sumSquares / windowSize);
+                
+                if (!inSound) {
+                    if (rms > silenceThresholdLimit) { inSound = true; soundStartWindow = w; silenceCounter = 0; }
+                } else {
+                    if (rms < silenceThresholdLimit) {
+                        silenceCounter++;
+                        if (silenceCounter >= minSilenceWindows) {
+                            let startSample = soundStartWindow * windowSize;
+                            let endSample = (w - silenceCounter) * windowSize;
+                            if ((endSample - startSample) > (sampleRate * 0.08)) segments.push({ start: startSample, end: endSample });
+                            inSound = false; silenceCounter = 0;
+                        }
+                    } else { silenceCounter = 0; }
+                }
+            }
+            if (inSound) {
+                let startSample = soundStartWindow * windowSize; let endSample = data.length - 1;
+                if ((endSample - startSample) > (sampleRate * 0.08)) segments.push({ start: startSample, end: endSample });
+            }
+
+            logToConsole(`Isolated ${segments.length} valid token envelopes.`);
+
+            segments.forEach((seg, idx) => {
+                if (idx < activeScriptTargets.length) {
+                    const targetKey = activeScriptTargets[idx];
+                    
+                    const tempLen = (seg.end - seg.start) + 1;
+                    const tempBuf = audioContext.createBuffer(1, tempLen, sampleRate);
+                    tempBuf.getChannelData(0).set(data.subarray(seg.start, seg.end + 1));
+                    
+                    const perfectlyTrimmedBuf = trimSingleBuffer(tempBuf);
+                    recordBufferForKey(targetKey, perfectlyTrimmedBuf);
+                    
+                    const wordElement = document.getElementById(`script-word-${idx}`);
+                    if (wordElement) {
+                        wordElement.classList.add('extracted');
+                        wordElement.title = 'Click to re-record just this one';
+                        wordElement.onclick = () => handleScriptWordClick(targetKey, idx);
+                    }
+                    
+                    logToConsole(`Extracted and Trimmed: [${targetKey}]`);
+                }
+            });
+        }
+
+        function constructCommsDSPCascade(destinationNode) {
+            const highPass = audioContext.createBiquadFilter();
+            highPass.type = "highpass";
+            
+            const lowPass = audioContext.createBiquadFilter();
+            lowPass.type = "lowpass";
+            
+            const waveshaper = audioContext.createWaveShaper();
+            waveshaper.oversample = "4x";
+
+            const dspBwInput = document.getElementById('dsp-bandwidth');
+            const profile = dspBwInput ? dspBwInput.value : 'vintage';
+            const dspDriveInput = document.getElementById('dsp-drive');
+            const drive = dspDriveInput ? parseFloat(dspDriveInput.value) : 15;
+
+            if (profile === 'vintage') {
+                highPass.frequency.value = 300;
+                lowPass.frequency.value = 3500;
+            } else if (profile === 'modern') {
+                highPass.frequency.value = 150;
+                lowPass.frequency.value = 6000;
+            } else { 
+                highPass.frequency.value = 400;
+                lowPass.frequency.value = 2400;
+            }
+
+            const makeDistortionCurve = (amount) => {
+                const k = typeof amount === 'number' ? amount : 50;
+                const n_samples = 44100;
+                const curve = new Float32Array(n_samples);
+                const deg = Math.PI / 180;
+                for (let i = 0; i < n_samples; ++i) {
+                    const x = (i * 2) / n_samples - 1;
+                    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+                }
+                return curve;
+            };
+            waveshaper.curve = makeDistortionCurve(drive);
+
+            highPass.connect(lowPass);
+            lowPass.connect(waveshaper);
+            waveshaper.connect(destinationNode);
+
+            return highPass; 
+        }
+
+      function schedulePlaybackWithHighlight(tokenKeys, spanIdForIndex) {
+          if (!audioContext) return;
+          let scheduledTime = audioContext.currentTime + 0.1;
+
+          tokenKeys.forEach((tokenKey, idx) => {
+              const buffer = capturedAudioBuffers[tokenKey];
+              if (!buffer) return;
+
+              const node = audioContext.createBufferSource();
+              node.buffer = buffer;
+
+              if (useDSPFilterEngine) {
+                  const dspHead = constructCommsDSPCascade(audioContext.destination);
+                  node.connect(dspHead);
+              } else {
+                  node.connect(audioContext.destination);
+              }
+
+              const startDelayMs = Math.max(0, (scheduledTime - audioContext.currentTime) * 1000);
+              const durationMs = buffer.duration * 1000;
+              const spanId = spanIdForIndex(idx);
+
+              setTimeout(() => {
+                  const el = document.getElementById(spanId);
+                  if (el) el.classList.add('now-playing');
+              }, startDelayMs);
+              setTimeout(() => {
+                  const el = document.getElementById(spanId);
+                  if (el) el.classList.remove('now-playing');
+              }, startDelayMs + durationMs);
+
+              node.start(scheduledTime);
+              scheduledTime += buffer.duration + 0.1; 
+          });
+      }
+
+      function playSingleTokenAudio(tokenKey, spanId) {
+          if (!audioContext) return;
+          const buffer = capturedAudioBuffers[tokenKey];
+          if (!buffer) return;
+
+          const node = audioContext.createBufferSource();
+          node.buffer = buffer;
+
+          if (useDSPFilterEngine) {
+              const dspHead = constructCommsDSPCascade(audioContext.destination);
+              node.connect(dspHead);
+          } else {
+              node.connect(audioContext.destination);
+          }
+
+          const el = document.getElementById(spanId);
+          if (el) el.classList.add('now-playing');
+          node.onended = () => { if (el) el.classList.remove('now-playing'); };
+          node.start();
+      }
+
+      function playCurrentCache() {
+          let tokensToPlay = [];
+          if (currentWorkflowMode === 'script') {
+              tokensToPlay = concatenativeScripts[currentScriptIndex % concatenativeScripts.length].tokens;
+          } else if (activeTargetFileKey) {
+              tokensToPlay = [activeTargetFileKey];
+          }
+
+          if (tokensToPlay.length === 0) return logToConsole("No tokens assigned to current node sequence.");
+
+          schedulePlaybackWithHighlight(tokensToPlay, idx => `script-word-${idx}`);
+      }
+
+        function playbackGeneratedStage() {
+            if (generatedStageSequence.length === 0 || !audioContext) return;
+            schedulePlaybackWithHighlight(
+                generatedStageSequence.map(item => item.key),
+                idx => `fluidity-word-${idx}`
+            );
+        }
+
+        function generateProceduralStage() {
+            const pools = categorizeBaseTokens();
+            const recordedVariantsByBase = {};
+
+            Object.keys(capturedAudioBuffers).forEach(key => {
+                if (key.includes('.')) return; 
+                const match = key.match(/^(.*?)(\d+)$/);
+                if (!match) return;
+                const base = match[1];
+                if (!pacenoteWordVariantCounts.hasOwnProperty(base)) return; 
+                if (!recordedVariantsByBase[base]) recordedVariantsByBase[base] = [];
+                recordedVariantsByBase[base].push(key);
+            });
+
+            const availableByCategory = {};
+            Object.keys(pools).forEach(cat => {
+                availableByCategory[cat] = pools[cat].filter(base => recordedVariantsByBase[base] && recordedVariantsByBase[base].length > 0);
+            });
+            const nonEmptyCategories = Object.keys(availableByCategory).filter(cat => availableByCategory[cat].length > 0);
+
+            if (nonEmptyCategories.length === 0) {
+                logToConsole("No recorded pacenote words yet — record some tokens in the Scripting Workflow first, then try the Playground.");
+                const tickerDisp = document.getElementById('stage-ticker-display');
+                if(tickerDisp) tickerDisp.innerText = "--- RECORD SOME WORDS FIRST ---";
+                const tkDisp = document.getElementById('fluidity-token-display');
+                if(tkDisp) tkDisp.innerHTML = '';
+                const playStageBtn = document.getElementById('playback-stage-btn');
+                if(playStageBtn) playStageBtn.disabled = true;
+                generatedStageSequence = [];
+                return;
+            }
+
+            const length = Math.floor(Math.random() * 7) + 12; 
+            const categories = [];
+            const sequence = [];
+
+            for (let i = 0; i < length; i++) {
+                let candidateCats = nonEmptyCategories.filter(cat => cat !== 'CONNECTOR');
+                if (candidateCats.length === 0) candidateCats = nonEmptyCategories; 
+                else if (nonEmptyCategories.includes('CONNECTOR')) candidateCats = candidateCats.concat('CONNECTOR'); 
+
+                const cat = candidateCats[Math.floor(Math.random() * candidateCats.length)];
+                const base = availableByCategory[cat][Math.floor(Math.random() * availableByCategory[cat].length)];
+                const variants = recordedVariantsByBase[base];
+                const key = variants[Math.floor(Math.random() * variants.length)];
+
+                categories.push(cat);
+                sequence.push({ key, label: base, category: cat });
+            }
+
+            const tokensForFix = sequence.map(s => s.key);
+            const displayForFix = sequence.map(s => s.label);
+            fixConnectorPlacement(categories, tokensForFix, displayForFix);
+            for (let i = 0; i < sequence.length; i++) {
+                sequence[i].key = tokensForFix[i];
+                sequence[i].label = displayForFix[i];
+            }
+
+            generatedStageSequence = sequence;
+            logToConsole(`Generated a ${length}-word random string from ${Object.keys(recordedVariantsByBase).length} recorded pacenote words.`);
+
+            const container = document.getElementById('fluidity-token-display');
+            if (container) {
+                container.innerHTML = '';
+                sequence.forEach((item, idx) => {
+                    const span = document.createElement('span');
+                    span.id = `fluidity-word-${idx}`;
+                    span.className = `script-span severity-${getSeverityForTokenKey(item.key)}`;
+                    span.innerText = formatScriptDisplayWord(item.label, item.category);
+                    attachWordUsageHover(span, item.key);
+                    container.appendChild(span);
+
+                    if (idx < sequence.length - 1) {
+                        const arrow = document.createElement('span');
+                        arrow.className = 'script-arrow';
+                        arrow.innerText = '->';
+                        container.appendChild(arrow);
+                    }
+                });
+            }
+
+            const tickerDisp = document.getElementById('stage-ticker-display');
+            if (tickerDisp) tickerDisp.innerText = `Sequence length: ${sequence.length} (built from your recorded words)`;
+            const playStageBtn = document.getElementById('playback-stage-btn');
+            if(playStageBtn) playStageBtn.disabled = false;
+        }
+
+        function updateMasterProgressMetrics() {
+            const requiredCount = completeSoundManifest.filter(k => !!capturedAudioBuffers[k]).length;
+            const pct = ((requiredCount / completeSoundManifest.length) * 100).toFixed(1);
+            
+            const masterProg = document.getElementById('master-progress');
+            if (masterProg) masterProg.style.width = `${pct}%`;
+            
+            const masterProgText = document.getElementById('master-progress-text');
+            if (masterProgText) masterProgText.innerText = `${requiredCount} / ${completeSoundManifest.length} Required Files Captured (${pct}%)`;
+
+            const bonusLabel = document.getElementById('bonus-progress-text');
+            if (bonusLabel) {
+                const impactCount = impactSpeechFiles.filter(e => !!capturedAudioBuffers[e.file]).length;
+                const miscCount = [...gameSpeechFiles, ...numberSpeechFiles].filter(e => !!capturedAudioBuffers[e.file]).length;
+                bonusLabel.innerText = `Includes ${impactCount}/${impactSpeechFiles.length} Impact + ${miscCount}/${gameSpeechFiles.length + numberSpeechFiles.length} Start/Go — all required`;
+            }
+
+            const complianceEl = document.getElementById('compliance-summary');
+            if (complianceEl) {
+                const missingCount = completeSoundManifest.length - requiredCount;
+                const flagged = getQualityFlaggedKeys();
+                const parts = [];
+                if (missingCount > 0) {
+                    parts.push(`<span style="color:#f56565;">⛔ ${missingCount} missing</span>`);
+                } else {
+                    parts.push(`<span style="color:#68d391;">✓ all required files captured</span>`);
+                }
+                if (flagged.length > 0) {
+                    parts.push(`<span style="color:#ed8936;">⚠️ ${flagged.length} quality warning${flagged.length === 1 ? '' : 's'}</span>`);
+                }
+                complianceEl.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+            }
+        }
+
+        function getQualityFlaggedKeys() {
+            return Object.keys(capturedAudioBuffers).filter(k => {
+                const q = audioQualityFlags[k];
+                return q && (q.silent || q.clipped);
+            });
+        }
+
+        function applyOfflineFilterBaking(sourceAudioBuffer) {
+            if (!useDSPFilterEngine) return sourceAudioBuffer;
+            
+            const offlineCtx = new OfflineAudioContext(1, sourceAudioBuffer.length, 44100);
+            const bufferSource = offlineCtx.createBufferSource();
+            bufferSource.buffer = sourceAudioBuffer;
+
+            const hp = offlineCtx.createBiquadFilter(); hp.type = "highpass";
+            const lp = offlineCtx.createBiquadFilter(); lp.type = "lowpass";
+            const shaper = offlineCtx.createWaveShaper(); shaper.oversample = "4x";
+
+            const dspBwInput = document.getElementById('dsp-bandwidth');
+            const profile = dspBwInput ? dspBwInput.value : 'vintage';
+            const dspDriveInput = document.getElementById('dsp-drive');
+            const drive = dspDriveInput ? parseFloat(dspDriveInput.value) : 15;
+
+            if (profile === 'vintage') { hp.frequency.value = 300; lp.frequency.value = 3500; }
+            else if (profile === 'modern') { hp.frequency.value = 150; lp.frequency.value = 6000; }
+            else { hp.frequency.value = 400; lp.frequency.value = 2400; }
+
+            const makeDistortionCurve = (amount) => {
+                const k = typeof amount === 'number' ? amount : 50; const n_samples = 44100;
+                const curve = new Float32Array(n_samples); const deg = Math.PI / 180;
+                for (let i = 0; i < n_samples; ++i) {
+                    const x = (i * 2) / n_samples - 1;
+                    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+                }
+                return curve;
+            };
+            shaper.curve = makeDistortionCurve(drive);
+
+            bufferSource.connect(hp); hp.connect(lp); lp.connect(shaper); shaper.connect(offlineCtx.destination);
+            bufferSource.start(0);
+
+            return new Promise((resolve) => {
+                offlineCtx.startRendering().then((renderedBuffer) => { resolve(renderedBuffer); });
+            });
+        }
+
+        function logCompliancePreExportReport() {
+            const missingKeys = completeSoundManifest.filter(k => !capturedAudioBuffers[k]);
+            const flaggedKeys = getQualityFlaggedKeys();
+
+            logToConsole(`--- Pre-export compliance report ---`);
+            if (missingKeys.length === 0) {
+                logToConsole(`✓ All ${completeSoundManifest.length} required files are captured.`);
+            } else {
+                logToConsole(`⛔ ${missingKeys.length} required file(s) still missing (will be padded with silence):`);
+                const preview = missingKeys.slice(0, 15).map(k => k.includes('.') ? k : `${k}.ogg`).join(', ');
+                logToConsole(`   ${preview}${missingKeys.length > 15 ? ` … and ${missingKeys.length - 15} more` : ''}`);
+            }
+            if (flaggedKeys.length === 0) {
+                logToConsole(`✓ No quality warnings on recorded files.`);
+            } else {
+                logToConsole(`⚠️ ${flaggedKeys.length} recorded file(s) flagged as likely silent/clipped:`);
+                flaggedKeys.slice(0, 15).forEach(k => {
+                    const q = audioQualityFlags[k];
+                    const reason = q.silent ? 'silent' : 'clipped';
+                    logToConsole(`   ${k.includes('.') ? k : `${k}.ogg`} — ${reason} (peak ${q.peak.toFixed(2)})`);
+                });
+                if (flaggedKeys.length > 15) logToConsole(`   … and ${flaggedKeys.length - 15} more`);
+            }
+            logToConsole(`-------------------------------------`);
+        }
+
+        async function exportStructuredZip() {
+            logCompliancePreExportReport();
+            logToConsole("Compressing deployment file payload... Applying DSP transformations where active.");
+            const zip = new JSZip();
+            const safeName = sanitizeCodriverNameForFile(codriverName);
+            const SOUNDS_FOLDER = 'Plugins/Pacenote/sounds/NickyGristV3 (benofficial2)';
+
+            const sampleRate = audioContext ? audioContext.sampleRate : 44100;
+            const fallbackSilence = audioContext ? audioContext.createBuffer(1, Math.floor(sampleRate * 0.05), sampleRate) : null;
+
+            const iniData = generatePacenoteConfigINI();
+            zip.file(`_REFERENCE_ONLY_word_to_file_map_${safeName}.ini`, iniData);
+
+            for (const base of Object.keys(pacenoteWordVariantCounts)) {
+                const count = pacenoteWordVariantCounts[base];
+                for (let v = 1; v <= count; v++) {
+                    const key = `${base}${v}`;
+                    let buf = capturedAudioBuffers[key] || fallbackSilence;
+                    if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
+                    if (buf) {
+                        const blob = convertAudioBufferToContainerBlob(buf);
+                        zip.file(`${SOUNDS_FOLDER}/${key}.ogg`, blob);
+                    }
+                }
+            }
+
+            if (fallbackSilence) {
+                const silenceBlob = convertAudioBufferToContainerBlob(fallbackSilence);
+                zip.file(`${SOUNDS_FOLDER}/${SILENCE_FILENAME}`, silenceBlob);
+            }
+
+            for (const base of brokenEngDuplicateWords) {
+                const key = `${base}1`; 
+                let buf = capturedAudioBuffers[key] || fallbackSilence;
+                if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
+                if (buf) {
+                    const blob = convertAudioBufferToContainerBlob(buf);
+                    zip.file(`Audio/Speech/Broken/Eng/${base}.ogg`, blob);
+                }
+            }
+
+            for (const entry of impactSpeechFiles) {
+                let buf = capturedAudioBuffers[entry.file] || fallbackSilence;
+                if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
+                if (buf) {
+                    const blob = convertAudioBufferToContainerBlob(buf);
+                    zip.file(`Audio/Impact/Speech/${entry.file}`, blob);
+                }
+            }
+
+            for (const entry of gameSpeechFiles) {
+                let buf = capturedAudioBuffers[entry.file] || fallbackSilence;
+                if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
+                if (buf) {
+                    const blob = convertAudioBufferToContainerBlob(buf);
+                    zip.file(`Audio/Game/${entry.file}`, blob);
+                }
+            }
+
+            for (const entry of numberSpeechFiles) {
+                let buf = capturedAudioBuffers[entry.file] || fallbackSilence;
+                if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
+                if (buf) {
+                    const blob = convertAudioBufferToContainerBlob(buf);
+                    zip.file(`Audio/Speech/Number/${entry.file}`, blob);
+                }
+            }
+
+            const appMetadataNote = `Pacenote Recorder Studio v${currentVersion}\nThis tool was built entirely by AI (Claude), based on prompts and direction from the pack's creator.\n`;
+            zip.file("studio_build_notice.txt", appMetadataNote);
+
+            zip.file('_HOW_TO_INSTALL.txt',
+        `This package mirrors the real RBR Pacenote Plugin folder structure:
+
+        Plugins/Pacenote/sounds/NickyGristV3 (benofficial2)/  <- main pacenote words
+        Audio/Impact/Speech/                                    <- impact reactions
+        Audio/Game/                                             <- stage-start "Go!"
+        Audio/Speech/Broken/Eng/                                <- damage/mechanical calls
+        Audio/Speech/Number/                                    <- stage-start countdown
+
+        Merge these into your RBR install, alongside (not replacing) the
+        existing Plugins/Pacenote/config/ and Plugins/Pacenote/language/
+        folders, which hold the plugin's own grammar system and aren't
+        touched by this tool.
+
+        The included _REFERENCE_ONLY_word_to_file_map ini is just a
+        convenience cross-reference of word -> file — it has not been
+        verified against the plugin's actual Descriptive.ini/Numeric.ini
+        syntax, so don't use it to replace your real config files.
+
+        IMPORTANT — FILE FORMAT: every ".ogg" file in this package is
+        actually a standard WAV (PCM) file with an .ogg extension, not true
+        Ogg Vorbis. Browsers can't easily encode real Ogg Vorbis without a
+        heavier encoder this tool doesn't bundle. Most builds of the RBR
+        Pacenote Plugin read audio by file extension rather than validating
+        the header, so this works in practice — but if your plugin build
+        does validate the header and rejects these files, batch-convert them
+        to real Ogg Vorbis first (e.g. with Audacity's chain/macro feature or
+        ffmpeg: "ffmpeg -i in.ogg -c:a libvorbis out.ogg" run over the folder).`
+            );
+
+            try {
+                const zipContent = await zip.generateAsync({ type: "blob" });
+                const url = URL.createObjectURL(zipContent);
+                const a = document.createElement('a'); 
+                a.href = url; 
+                a.download = `RBR_${safeName}_Codriver_Pack.zip`;
+                document.body.appendChild(a); 
+                a.click(); 
+                document.body.removeChild(a); 
+                URL.revokeObjectURL(url);
+                logToConsole("Package compiled successfully.");
+            } catch (e) { 
+                logToConsole(`ZIP Error: ${e.message}`); 
+            }
+        }
+
+        function convertAudioBufferToContainerBlob(audioBuffer) {
+            const pcmData = audioBuffer.getChannelData(0); const sampleRate = audioBuffer.sampleRate; const sampleCount = pcmData.length;
+            const bufferArray = new ArrayBuffer(44 + sampleCount * 2); const view = new DataView(bufferArray);
+            const writeString = (offset, string) => { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); };
+            writeString(0, 'RIFF'); view.setUint32(4, 36 + sampleCount * 2, true); writeString(8, 'WAVE'); writeString(12, 'fmt ');
+            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(36, 'data');
+            view.setUint32(40, sampleCount * 2, true);
+            let offset = 44;
+            for (let i = 0; i < sampleCount; i++, offset += 2) {
+                let s = Math.max(-1, Math.min(1, pcmData[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Blob([view], { type: 'audio/ogg' });
+        }
+
+        async function saveStudioSessionToStorage(isAutoBackup = false) {
+            try {
+                const db = await getDB(); const timestamp = new Date().toLocaleString();
+                const metaTx = db.transaction('meta', 'readwrite'); const metaStore = metaTx.objectStore('meta');
+                metaStore.put(timestamp, profileMetaKey('timestamp')); metaStore.put(currentScriptIndex, profileMetaKey('scriptIndex')); metaStore.put(codriverName, profileMetaKey('codriverName'));
+                const bufferTx = db.transaction('buffers', 'readwrite'); const bufferStore = bufferTx.objectStore('buffers');
+                Object.keys(capturedAudioBuffers).forEach(key => {
+                    const buffer = capturedAudioBuffers[key]; const rawSamples = buffer.getChannelData(0);
+                    bufferStore.put(new Float32Array(rawSamples), profileBufferKey(key));
+                });
+                await new Promise((res) => { bufferTx.oncomplete = res; });
+                const sessTs = document.getElementById('session-timestamp');
+                if(sessTs) sessTs.innerText = `${isAutoBackup ? 'Autosaved' : 'Saved Last'}: ${timestamp}`;
+            } catch(e) { logToConsole(`DB Error: ${e.message}`); }
+        }
+
+        async function loadStudioSessionFromStorage(silent = false) {
+            try {
+                const db = await getDB();
+                if (!audioContext) { const AudioCtxClass = window.AudioContext || window.webkitAudioContext; audioContext = new AudioCtxClass({ sampleRate: 44100 }); }
+                const metaTx = db.transaction('meta', 'readonly'); const metaStore = metaTx.objectStore('meta');
+                const scriptIdxReq = metaStore.get(profileMetaKey('scriptIndex')); const timestampReq = metaStore.get(profileMetaKey('timestamp')); const codriverNameReq = metaStore.get(profileMetaKey('codriverName'));
+                await new Promise((res) => metaTx.oncomplete = res);
+                currentScriptIndex = scriptIdxReq.result || 0; const timestamp = timestampReq.result || 'Unknown';
+                if (codriverNameReq.result) {
+                    codriverName = codriverNameReq.result;
+                    const cInput = document.getElementById('codriver-name-input');
+                    if(cInput) cInput.value = codriverName;
+                }
+                const prefix = activeProfileName === 'default' ? null : `${activeProfileName}::`;
+                const bufferTx = db.transaction('buffers', 'readonly'); const bufferStore = bufferTx.objectStore('buffers');
+                bufferStore.openCursor().onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        const belongsToActiveProfile = prefix ? cursor.key.startsWith(prefix) : !cursor.key.includes('::');
+                        if (belongsToActiveProfile) {
+                            const localKey = prefix ? cursor.key.slice(prefix.length) : cursor.key;
+                            const cleanBuf = audioContext.createBuffer(1, cursor.value.length, 44100);
+                            cleanBuf.getChannelData(0).set(cursor.value); recordBufferForKey(localKey, cleanBuf);
+                        }
+                        cursor.continue();
+                    }
+                };
+
+                await new Promise((res) => bufferTx.oncomplete = res);
+                if (!silent) logToConsole(`Restored ${Object.keys(capturedAudioBuffers).length} audio tokens!`);
+                const sessTs = document.getElementById('session-timestamp');
+                if(sessTs) sessTs.innerText = `Last Extracted Save: ${timestamp}`;
+                updateMasterProgressMetrics(); renderTokenMatrixGrid();
+                if (currentWorkflowMode === 'script') loadScriptIndex(currentScriptIndex);
+                
+                // AUTO NORMALIZE AFTER LOAD
+                await normalizeSessionVolumes(0.95);
+
+            } catch (e) { if (!silent) logToConsole(`Load Exception: ${e.message}`); }
+        }
+
+        async function clearStudioSessionStorage() {
+            const profileLabel = activeProfileName === 'default' ? 'Default' : activeProfileName;
+            if (confirm(`Clear all locally cached recordings for the "${profileLabel}" profile? This can't be undone.`)) {
+                try {
+                    const db = await getDB();
+                    const prefix = activeProfileName === 'default' ? null : `${activeProfileName}::`;
+
+                    const metaTx = db.transaction('meta', 'readwrite'); const metaStore = metaTx.objectStore('meta');
+                    ['timestamp', 'scriptIndex', 'codriverName'].forEach(k => metaStore.delete(profileMetaKey(k)));
+                    await new Promise((res) => metaTx.oncomplete = res);
+
+                    const bufferTx = db.transaction('buffers', 'readwrite'); const bufferStore = bufferTx.objectStore('buffers');
+                    bufferStore.openCursor().onsuccess = (event) => {
+                        const cursor = event.target.result;
+                        if (cursor) {
+                            const belongsToActiveProfile = prefix ? cursor.key.startsWith(prefix) : !cursor.key.includes('::');
+                            if (belongsToActiveProfile) cursor.delete();
+                            cursor.continue();
+                        }
+                    };
+                    await new Promise((res) => bufferTx.oncomplete = res);
+
+                    Object.keys(capturedAudioBuffers).forEach(k => delete capturedAudioBuffers[k]);
+                    Object.keys(audioQualityFlags).forEach(k => delete audioQualityFlags[k]);
+                    const sessTs = document.getElementById('session-timestamp');
+                    if(sessTs) sessTs.innerText = "No stored session discovered.";
+                    updateMasterProgressMetrics(); renderTokenMatrixGrid();
+                    if (currentWorkflowMode === 'script') loadScriptIndex(currentScriptIndex);
+                } catch(e) { logToConsole(`Error clearing cache: ${e.message}`); }
+            }
+        }
+
+        async function getProfileList() {
+            try {
+                const db = await getDB();
+                const tx = db.transaction('meta', 'readonly');
+                const req = tx.objectStore('meta').get('__profileList__');
+                const extra = await new Promise((resolve) => { tx.oncomplete = () => resolve(req.result || []); });
+                return ['default', ...extra.filter(p => p !== 'default')];
+            } catch (e) { return ['default']; }
+        }
+
+        async function saveProfileList(extraProfiles) {
+            const db = await getDB();
+            const tx = db.transaction('meta', 'readwrite');
+            tx.objectStore('meta').put(extraProfiles, '__profileList__');
+            await new Promise((res) => tx.oncomplete = res);
+        }
+
+        async function refreshProfileDropdown() {
+            const select = document.getElementById('profile-select');
+            if (!select) return;
+            const list = await getProfileList();
+            select.innerHTML = '';
+            list.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.innerText = name === 'default' ? 'Default' : name;
+                if (name === activeProfileName) opt.selected = true;
+                select.appendChild(opt);
+            });
+            const newOpt = document.createElement('option');
+            newOpt.value = '__new__';
+            newOpt.innerText = '+ New Profile…';
+            select.appendChild(newOpt);
+        }
+
+        async function handleProfileDropdownChange() {
+            const select = document.getElementById('profile-select');
+            if(!select) return;
+            const chosen = select.value;
+            if (chosen === '__new__') {
+                const name = prompt('New profile name (e.g. a co-driver character name):');
+                if (!name || !name.trim()) { select.value = activeProfileName; return; }
+                const cleanName = name.trim().replace(/::/g, '-');
+                if (cleanName.toLowerCase() === 'default') { alert('"Default" is reserved for the original profile.'); select.value = activeProfileName; return; }
+                const list = await getProfileList();
+                if (!list.includes(cleanName)) await saveProfileList([...list.filter(p => p !== 'default'), cleanName]);
+                await switchProfile(cleanName);
+                await refreshProfileDropdown();
+                return;
+            }
+            await switchProfile(chosen);
+        }
+
+        async function switchProfile(newProfileName) {
+            if (newProfileName === activeProfileName) return;
+            await saveStudioSessionToStorage(true);
+
+            Object.keys(capturedAudioBuffers).forEach(k => delete capturedAudioBuffers[k]);
+            Object.keys(audioQualityFlags).forEach(k => delete audioQualityFlags[k]);
+
+            activeProfileName = newProfileName;
+            if (newProfileName !== 'default') codriverName = newProfileName; 
+            const cdInput = document.getElementById('codriver-name-input');
+            if(cdInput) cdInput.value = codriverName;
+
+            await loadStudioSessionFromStorage(true); 
+            const label = document.getElementById('active-profile-label');
+            if (label) label.innerText = `Active profile: ${newProfileName === 'default' ? 'Default' : newProfileName}`;
+            logToConsole(`Switched to profile "${newProfileName === 'default' ? 'Default' : newProfileName}".`);
+        }
+
+        async function exportProjectBackup() {
+            logToConsole("Building portable project backup (raw takes + metadata)...");
+            const zip = new JSZip();
+            const manifest = {
+                formatVersion: 1,
+                savedAt: new Date().toISOString(),
+                codriverName: codriverName,
+                profileName: activeProfileName,
+                currentScriptIndex: currentScriptIndex,
+                quality: {}
+            };
+            const keys = Object.keys(capturedAudioBuffers);
+            for (const key of keys) {
+                const blob = convertAudioBufferToContainerBlob(capturedAudioBuffers[key]);
+                zip.file(`raw/${key}.wav`, blob);
+                manifest.quality[key] = audioQualityFlags[key] || null;
+            }
+            zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+            try {
+                const content = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `RBR_Backup_${sanitizeCodriverNameForFile(codriverName)}_${new Date().toISOString().slice(0, 10)}.zip`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                logToConsole(`Backup complete: ${keys.length} raw take(s) + metadata.`);
+            } catch (e) { logToConsole(`Backup Error: ${e.message}`); }
+        }
+
+        async function importProjectBackup(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (!audioContext) { const AudioCtxClass = window.AudioContext || window.webkitAudioContext; audioContext = new AudioCtxClass({ sampleRate: 44100 }); }
+            try {
+                logToConsole(`Reading backup file: ${file.name}...`);
+                const zip = await JSZip.loadAsync(file);
+                const manifestEntry = zip.file('manifest.json');
+                if (!manifestEntry) { logToConsole('Invalid backup: no manifest.json found in the zip.'); return; }
+                const manifest = JSON.parse(await manifestEntry.async('string'));
+                const rawFiles = Object.keys(zip.files).filter(name => name.startsWith('raw/') && name.endsWith('.wav'));
+
+                if (!confirm(`Import ${rawFiles.length} take(s) from this backup into the current profile ("${activeProfileName === 'default' ? 'Default' : activeProfileName}")? Matching takes you already have will be overwritten.`)) return;
+
+                let restored = 0;
+                for (const path of rawFiles) {
+                    const key = path.slice(4, -4); 
+                    const arrayBuffer = await zip.file(path).async('arraybuffer');
+                    await new Promise((resolve) => {
+                        audioContext.decodeAudioData(arrayBuffer.slice(0), (decoded) => {
+                            recordBufferForKey(key, decoded);
+                            restored++;
+                            resolve();
+                        }, () => resolve()); 
+                    });
+                }
+
+                const cInput = document.getElementById('codriver-name-input');
+                if (manifest.codriverName && cInput && cInput.value.trim() === '') {
+                    codriverName = manifest.codriverName;
+                    cInput.value = codriverName;
+                }
+
+                logToConsole(`Backup import complete: ${restored} take(s) restored.`);
+                updateMasterProgressMetrics(); renderTokenMatrixGrid();
+                if (currentWorkflowMode === 'script') loadScriptIndex(currentScriptIndex);
+                await saveStudioSessionToStorage(true); 
+
+                // AUTO NORMALIZE AFTER IMPORT
+                await normalizeSessionVolumes(0.95);
+
+            } catch (e) {
+                logToConsole(`Import Error: ${e.message}`);
+            } finally {
+                event.target.value = ''; 
+            }
+        }
+
+        async function checkLocalStorageMetadata() {
+            try {
+                const db = await getDB(); const tx = db.transaction(['meta', 'buffers'], 'readonly');
+                const tReq = tx.objectStore('meta').get(profileMetaKey('timestamp')); const cReq = tx.objectStore('buffers').count();
+                tx.oncomplete = () => { 
+                    const sessTs = document.getElementById('session-timestamp');
+                    if (tReq.result && sessTs) sessTs.innerText = `Stored: ${tReq.result} (${cReq.result} files cached across all profiles)`; 
+                };
+            } catch(e) {}
+            refreshProfileDropdown();
+        }
+
+        renderTokenMatrixGrid();
+        const nextBtn = document.getElementById('next-script-btn');
+        if(nextBtn) nextBtn.style.display = 'inline-block';
+
+        async function refreshMicList() {
+            const micSelect = document.getElementById('mic-select');
+            if(!micSelect) return;
+            try {
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                
+                micSelect.innerHTML = '<option value="">Default System Microphone</option>';
+                audioInputs.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Microphone ${micSelect.length}`;
+                    micSelect.appendChild(option);
+                });
+            } catch (err) {
+                logToConsole("Mic Access Denied: Cannot list devices.");
+            }
+        }
+
+        refreshMicList();
+        
+        function clearCurrentScriptHighlights() {
+            const tokens = (currentWorkflowMode === 'script') 
+                ? concatenativeScripts[currentScriptIndex % concatenativeScripts.length].tokens.map(key => ({ key }))
+                : [{ key: activeTargetFileKey }];
+
+            tokens.forEach((token, idx) => {
+                delete capturedAudioBuffers[token.key];
+                delete audioQualityFlags[token.key];
+                
+                const el = document.getElementById(`script-word-${idx}`);
+                if (el) el.classList.remove('extracted');
+            });
+
+            renderTokenMatrixGrid();
+            logToConsole("Current script buffers cleared for re-recording.");
+        }
+
+        function generatePacenoteConfigINI() {
+            let iniContent = `; Word -> File reference map for "${codriverName}" - Generated by RBR Recorder Studio v3.0.3\n`;
+            iniContent += "; NOT the real plugin config format (see Plugins/Pacenote/config/ + language/ for that) — reference only.\n\n";
+
+            iniContent += "; --- Main pacenote words: Plugins/Pacenote/sounds/NickyGristV3 (benofficial2)/ ---\n\n";
+            Object.keys(pacenoteWordVariantCounts).sort().forEach(base => {
+                const count = pacenoteWordVariantCounts[base];
+                const variants = [];
+                for (let v = 1; v <= count; v++) variants.push(`${base}${v}`);
+                iniContent += `${base} = ${variants.join(', ')}\n`;
+            });
+            iniContent += `silence = ${SILENCE_FILENAME} (auto-generated, not recorded)\n\n`;
+
+            iniContent += "; --- Impact reaction calls: Audio/Impact/Speech/ ---\n\n";
+            impactSpeechFiles.forEach(entry => { iniContent += `${entry.file} = "${entry.phrase}"\n`; });
+
+            iniContent += "\n; --- Damage/mechanical calls: Audio/Speech/Broken/Eng/ (duplicated from the main word bank) ---\n\n";
+            brokenEngDuplicateWords.forEach(base => { iniContent += `${base}.ogg = ${base}1 (same recording as the main word bank)\n`; });
+
+            iniContent += "\n; --- Stage-start: Audio/Game/ + Audio/Speech/Number/ ---\n\n";
+            gameSpeechFiles.concat(numberSpeechFiles).forEach(entry => { iniContent += `${entry.file} = "${entry.phrase}"\n`; });
+
+            return iniContent;
+        }
+
+        /**
+         * Normalizes all loaded audio buffers in the session to a target peak.
+         * Runs asynchronously to refresh progress elements for every single token without freezing.
+         */
+        async function normalizeSessionVolumes(targetPeak = 0.95) {
+            console.log("[Normalization Progress] Analyzing and normalizing session volumes...");
+            const fileKeys = Object.keys(capturedAudioBuffers);
+            const total = fileKeys.length;
+            
+            if (total === 0) {
+                console.log("[Normalization Progress] No audio buffers found to normalize.");
+                return;
+            }
+
+            const overlay = document.getElementById('norm-overlay');
+            const fill = document.getElementById('norm-fill');
+            const text = document.getElementById('norm-text');
+            
+            if (overlay) overlay.style.display = 'flex';
+            if (fill) fill.style.width = '0%';
+            if (text) text.innerHTML = 'Preparing...';
+
+            // Allow UI to render the overlay before intensive processing
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            
+            for (let i = 0; i < total; i++) {
+                const fileKey = fileKeys[i];
+                const buffer = capturedAudioBuffers[fileKey];
+                
+                // Keep log of it in the console as requested
+                console.log(`[Normalization Progress] Processing token ${i + 1} of ${total}: ${fileKey}`);
+                
+                if (!buffer) continue;
+
+                const percent = Math.round(((i + 1) / total) * 100);
+                
+                // Specify which tokens are being processed in the progress text
+                if (fill) fill.style.width = `${percent}%`;
+                if (text) {
+                    text.innerHTML = `<strong>${percent}%</strong> - Normalizing token: <span style="color:#63b3ed;">${fileKey}</span><br><small>(${i + 1} of ${total})</small>`;
+                }
+
+                // Yield to the browser to render the UI before processing the next token
+                await new Promise(resolve => setTimeout(resolve, 5));
+
+                // Reuse normalizeAudioBuffer (has the noise-floor safeguard that
+                // skips near-silent buffers instead of blasting background hiss
+                // up to full volume) and analyzeBufferQuality (recomputes peak/
+                // silent/clipped together) rather than re-deriving this math
+                // separately - that duplicate path had neither safeguard, so a
+                // near-empty take could get amplified to 0.95 peak and then get
+                // explicitly marked "not silent", hiding a bad recording instead
+                // of flagging it.
+                const before = analyzeBufferQuality(buffer);
+                normalizeAudioBuffer(buffer, targetPeak);
+                const after = analyzeBufferQuality(buffer);
+                audioQualityFlags[fileKey] = after;
+
+                if (before.silent) {
+                    console.log(`  -> Skipped: peak ${before.peak.toFixed(3)} is below the noise floor (likely silence)`);
+                } else {
+                    console.log(`  -> Peak ${before.peak.toFixed(3)} adjusted to ${after.peak.toFixed(3)}`);
+                }
+            }
+            
+            console.log("[Normalization Progress] Normalization sweep complete!");
+            if (text) text.innerHTML = `<strong>100%</strong> - Normalization complete!`;
+            
+            // Refresh UI after normalization
+            renderTokenMatrixGrid();
+            
+            setTimeout(() => {
+                if (overlay) overlay.style.display = 'none';
+            }, 1000);
+        }
+async function loadChangelog(lang, currentVersion) {
+    const container = document.getElementById('changelog-content');
+    const archive = document.getElementById('changelog-archive');
+    if (!container) return;
+
+    try {
+        const response = await fetch('../changelog.json');
+        const data = await response.json();
+        const logs = data[lang] || data['en'];
+        
+        // 1. Find the current version
+        const latestChange = logs.find(item => item.version === currentVersion);
+        
+        if (latestChange) {
+            container.innerHTML = `
+                <div style="padding: 5px 0;">
+                    <strong style="color: #fff;">v${latestChange.version}</strong> 
+                    <span style="font-size: 0.7rem; color: #718096;">(${latestChange.date})</span><br>
+                    <p style="margin: 5px 0 0 0;">${latestChange.desc}</p>
+                </div>
+            `;
+        } else {
+            container.innerText = "No updates for this version.";
+        }
+
+        // 2. Prepare the archive (everything EXCEPT the current version)
+        const oldLogs = logs.filter(item => item.version !== currentVersion);
+        
+        if (archive && oldLogs.length > 0) {
+            archive.innerHTML = oldLogs.map(item => `
+                <div style="border-top:1px solid #2d3748; padding: 8px 0; font-size: 0.8rem; color: #a0aec0;">
+                    <strong>v${item.version}</strong> <span style="font-size: 0.7rem; color: #718096;">(${item.date})</span><br>
+                    ${item.desc}
+                </div>
+            `).join('');
+        }
+    } catch (e) {
+        if (container) container.innerText = "Could not load changelog.";
+    }
+}
+
+// Add the toggle function
+function toggleHistory() {
+    const archive = document.getElementById('changelog-archive');
+    const btn = document.getElementById('toggle-history-btn');
+    if (!archive || !btn) return;
+    const isHidden = archive.style.display === "none";
+    archive.style.display = isHidden ? "block" : "none";
+    btn.innerText = isHidden ? "Hide Old Updates" : "View Old Updates";
+}
+loadChangelog(lang, currentVersion);
+    </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"1e605d8e61fb4c93bc4988d0ab8762b9","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
