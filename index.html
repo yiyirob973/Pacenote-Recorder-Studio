@@ -2,7 +2,7 @@
 <!--
 
 PACENOTE RECORDER STUDIO - ARCHITECTURE & FUNCTION INDEX
-Version: 3.0.4
+Version: 3.2.0
 
 APP OVERVIEW:
 A browser-based audio engineering suite for the RBR Pacenote Plugin.
@@ -50,6 +50,15 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
 
 * exportStructuredZip(): Generates the final project ZIP.
 * exportProjectBackup(): Exports raw data/metadata.
+
+9. LANGUAGE ENGINE (Phase 2+)
+
+* switchLanguage(): Swaps the active word/manifest data between English
+  and Finnish. Export stays locked to English until Phase 5.
+* rebuildCompleteSoundManifest() / rebuildConcatenativeScripts(): Regenerate
+  derived data (file manifest, reading scripts) after a language switch.
+* updateLanguageExportGuard(): Disables the export button while a
+  non-English language is active.
 
 -->
 <html lang="en">
@@ -244,6 +253,13 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
     </select>
     <div id="active-profile-label" style="font-size:0.75rem; color:#718096; margin-top:4px;">Active profile: Default</div>
 </div>
+<div class="control-group">
+    <label for="language-select">🌐 Pacenote Language <span style="color:#718096; font-weight:normal;">(Phase 2 preview: word set &amp; manifest switch live — translated display, tooltips &amp; export land in later phases)</span></label>
+    <select id="language-select" onchange="switchLanguage(this.value)">
+        <option value="en" selected>English</option>
+        <option value="fi">Finnish (Numeronuotti A) — Beta</option>
+    </select>
+</div>
 
                 <div class="tab-bar">
                     <div class="tab active" id="tab-script" onclick="switchWorkflowMode('script')">📋 Scripting Algorithm Workflow</div>
@@ -346,7 +362,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
                 </div>
                 <div class="control-group" style="display: grid; grid-template-columns: auto 1fr; gap: 20px;">
                     <div>
-                        <button class="action-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
+                        <button class="action-btn" id="export-zip-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
                         <div style="font-size:0.68rem; color:#718096; margin-top:4px; text-align:center;">Files are WAV audio saved with a .ogg extension — see _HOW_TO_INSTALL.txt if your plugin build validates headers.</div>
                     </div>
                     <div class="progress-container" style="margin-top: auto; margin-bottom: auto;">
@@ -428,7 +444,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         let codriverName = 'My Custom CoDriver';
         let activeProfileName = 'default';
 	let lang = 'en';
-	let currentVersion = "3.1.0";
+	let currentVersion = "3.2.0";
 	
 	
 	document.title = "Pacenote Recorder Studio - v" + currentVersion;
@@ -496,11 +512,11 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             logToConsole(`Comms Radio Simulation Matrix toggled: ${useDSPFilterEngine ? 'ACTIVE' : 'INACTIVE'}`);
         }
 
-        const pacenoteWordVariantCounts = {"1000_":4,"1001_":4,"100_":4,"101_":4,"10_":4,"120_":4,"121_":4,"140_":4,"141_":4,"150_":4,"151_":4,"160_":4,"161_":4,"180_":4,"181_":4,"1_":4,"200_":4,"201_":4,"20_":4,"21_":4,"250_":4,"251_":4,"2_":4,"300_":4,"301_":4,"30_":4,"31_":4,"350_":4,"351_":4,"3_":4,"400_":4,"401_":4,"40_":4,"41_":4,"450_":4,"451_":4,"4_":4,"500_":4,"501_":4,"50_":4,"51_":4,"5_":4,"600_":4,"601_":4,"60_":4,"61_":4,"6_":4,"700_":4,"701_":4,"70_":4,"71_":4,"7_":4,"800_":4,"801_":4,"80_":4,"81_":4,"8_":4,"900_":4,"901_":4,"90_":4,"90_left":4,"90_left_plus":4,"90_plus_scale":3,"90_right":4,"90_right_plus":4,"90_scale":3,"91_":4,"9_":4,"_90_":3,"_90_plus":3,"_acute":3,"_five":3,"_five_plus":3,"_flat":3,"_four":3,"_four_plus":3,"_hp":3,"_hp_plus":3,"_max":3,"_one":3,"_one_plus":3,"_open_hp":3,"_six":3,"_six_plus":3,"_square":3,"_square_plus":3,"_three":3,"_three_plus":3,"_two":3,"_two_plus":3,"a_bit":2,"a_lot":2,"acute_left":4,"acute_right":4,"acute_scale":3,"after":2,"again":4,"and":4,"at":2,"at_bale":2,"at_banner":2,"at_barrel":2,"at_black":2,"at_blue":2,"at_bridge":2,"at_bush":2,"at_car":2,"at_crest":2,"at_entry":2,"at_exit":2,"at_fence":2,"at_flag":2,"at_gate":2,"at_green":2,"at_guardrail":2,"at_house":2,"at_junction":2,"at_log":2,"at_logs":2,"at_object":2,"at_opening":2,"at_post":2,"at_red":2,"at_rock":2,"at_sign":2,"at_tape":2,"at_thing":2,"at_tree":2,"at_trees":2,"at_wall":2,"at_white":2,"at_yellow":2,"bad":3,"bad_bump":2,"bad_bump_dip":2,"bad_bump_dips":2,"bad_bumps":2,"bad_camber":1,"bad_squash":2,"bad_sumppu":2,"badcamber":2,"bale":2,"bale_in":2,"bale_out":2,"bales":2,"barrel_in":2,"barrel_out":2,"barrels":2,"batterys_flat":1,"be_brave":2,"before":2,"behind":2,"better_grip":2,"between_bales":2,"between_barrels":2,"between_tires":2,"big":2,"big_dab":2,"big_jump":2,"big_squash":2,"big_sumppu":2,"black_ice":2,"blind":2,"bloodylong":3,"border":2,"boulder":2,"brake":3,"brake_10_":3,"brake_20_":3,"brake_30_":3,"brake_40_":3,"brake_50_":3,"brake_and":3,"brake_into":3,"bridge":2,"bridge_bump":2,"brow":2,"bump":2,"bump_dip":2,"bump_dips":2,"bumps":2,"bumps_over":2,"bumpy_braking":2,"bush":2,"busstop_chicane":4,"busstop_chicane_left":4,"busstop_chicane_right":4,"camber":2,"care":3,"care_in":2,"care_out":2,"caution":3,"caution_water":2,"cautioncaution":3,"cautioncautioncaution":3,"checkpoint":2,"chicane":4,"chicane_dive_left":4,"chicane_dive_right":4,"chicane_left_entry":4,"chicane_right_entry":4,"clip":2,"cobbles":2,"concrete":2,"continues_over_brow":2,"continues_over_crest":2,"continues_over_small_crest":2,"cramped":2,"crest":2,"crest_dab":2,"crest_to_left":2,"crest_to_right":2,"curb":2,"curbside":2,"curve":2,"cut":3,"cut_through":2,"dab":2,"dab_over_jump":2,"damp":2,"deceptive":2,"deep":2,"deep_rut":2,"deep_ruts":2,"dip":2,"directly":2,"dirt":2,"dirty":2,"ditch":2,"ditch_in":2,"ditch_out":2,"done":2,"dont":3,"dont_cut":3,"dont_cut_early":2,"dont_cut_late":2,"dont_early":2,"dont_late":2,"donut_left":4,"donut_right":4,"double":2,"double_caution":3,"double_crest":2,"double_dont":2,"double_dont_cut":2,"double_jump":2,"doubletightens":3,"down":2,"drain":2,"drain_in":2,"drain_out":2,"draws_in":2,"drop_in":2,"drop_out":2,"drops":2,"drops_left":2,"drops_right":2,"dry":2,"early":3,"early_cut":2,"easy":3,"edge":2,"exact":2,"exit_lap":4,"fast":3,"fence":2,"fence_in":2,"fence_out":2,"fickle":2,"finish":4,"first_exit":2,"five_bales":2,"five_left":4,"five_left_plus":4,"five_parts":2,"five_plus_scale":3,"five_right":4,"five_right_plus":4,"five_scale":3,"flat":3,"flat_crest":2,"flat_jump":2,"flat_left":4,"flat_right":4,"flat_scale":3,"for":2,"fork_left":4,"fork_right":4,"four_bales":2,"four_left":4,"four_left_plus":4,"four_parts":2,"four_plus_scale":3,"four_right":4,"four_right_plus":4,"four_scale":3,"from":2,"from_left":2,"from_right":2,"fuckinglong":3,"full_cut":2,"gate":2,"gearbox_broke":1,"gets_faster":2,"gets_rougher":2,"gets_slower":2,"gets_smoother":2,"go":3,"go_narrow":2,"go_round":2,"go_straight":2,"go_wide":2,"good":2,"gravel":2,"grid":2,"grip":2,"grip_in":2,"grip_middle":2,"grip_out":2,"grit":2,"guardrail":2,"guardrail_in":2,"guardrail_out":2,"guardrails":2,"halflong":3,"handbrake":2,"hang":2,"hard":3,"hole":2,"hollow":2,"hook":2,"house":2,"house_in":2,"house_out":2,"hp_left":4,"hp_left_plus":4,"hp_plus_scale":3,"hp_right":4,"hp_right_plus":4,"hp_scale":3,"hug":2,"ice":2,"icy":2,"immediate":4,"important":2,"in":2,"in_and_out":2,"into":4,"island":2,"jump":2,"jump_dab":2,"jump_maybe":2,"junction":3,"junction_left":4,"junction_right":4,"keep_in":2,"keep_left":2,"keep_middle":2,"keep_out":2,"keep_right":2,"late":3,"late_cut":2,"lateish":2,"layby":2,"left":4,"left_around":4,"left_entry":2,"left_into":4,"left_over":4,"left_right":4,"leftish":2,"lift":2,"lifts":2,"light":2,"line":3,"log":2,"log_in":2,"log_out":2,"logs":2,"logs_in":2,"logs_out":2,"long":3,"long_crest":2,"long_rut":2,"long_ruts":2,"longlong":3,"loose_gravel":2,"lump":2,"many":2,"marshalls":2,"mast":2,"max_left":4,"max_right":4,"max_scale":3,"maybe":3,"maybe_slippy":2,"minus":2,"minusminus":2,"much":2,"muddy":2,"narrow":2,"narrow_bridge":2,"narrow_gate":2,"narrows":3,"near":2,"neat":2,"negative":2,"netting":2,"nips":2,"off":2,"on":2,"one_left":4,"one_left_plus":4,"one_plus_scale":3,"one_right":4,"one_right_plus":4,"one_scale":3,"onto":4,"onto_big_road":2,"onto_bridge":2,"onto_cobbles":2,"onto_concrete":2,"onto_field":2,"onto_finish":4,"onto_grass":2,"onto_gravel":2,"onto_grit":2,"onto_ice":2,"onto_narrow_bridge":2,"onto_narrower":2,"onto_nextlap":4,"onto_slush":2,"onto_small_road":2,"onto_snow":2,"onto_straight":2,"onto_tarmac":2,"onto_wider":2,"open_hp_left":4,"open_hp_right":4,"open_hp_scale":3,"opens":2,"opens_90_":3,"opens_90_plus":3,"opens_abit":2,"opens_at_junction":2,"opens_bloodylong":2,"opens_early":2,"opens_five":3,"opens_five_plus":3,"opens_flat":3,"opens_four":3,"opens_four_plus":3,"opens_fuckinglong":2,"opens_halflong":2,"opens_hp":3,"opens_hp_plus":3,"opens_late":2,"opens_long":2,"opens_longlong":2,"opens_max":3,"opens_one":3,"opens_one_plus":3,"opens_open_hp":3,"opens_overcrest":2,"opens_round":2,"opens_sharp":2,"opens_six":3,"opens_six_plus":3,"opens_square":3,"opens_square_plus":3,"opens_three":3,"opens_three_plus":3,"opens_tightens":2,"opens_two":3,"opens_two_plus":3,"opens_verylong":2,"opens_veryverylong":2,"out":2,"over":2,"over_big_jump":2,"over_bridge":2,"over_brow":2,"over_crest":2,"over_early_and_late_crest":2,"over_early_crest":2,"over_jump":2,"over_jump_dab":2,"over_jump_maybe":2,"over_late_crest":2,"over_long_crest":2,"over_narrow_bridge":2,"over_rails":2,"over_rocks":2,"over_small_crest":2,"over_small_jump":2,"over_three_crests":2,"over_two_crests":2,"past_junction":2,"path":2,"patient":2,"plus":2,"plusplus":2,"positive":2,"post":2,"post_early":2,"post_in":2,"post_late":2,"post_out":2,"posts":2,"precise":2,"problem_engine":1,"puddle":2,"rails":2,"remember":2,"right":4,"right_around":4,"right_entry":2,"right_into":4,"right_left":4,"right_over":4,"rightish":2,"road":2,"rock":2,"rocks":2,"rocks_in":2,"rocks_out":2,"rotate":3,"round":3,"roundabout":2,"rubble":2,"rut":2,"ruts":2,"scale_minus":2,"scale_plus":2,"second_exit":2,"see":2,"sharp":3,"shit":2,"short":3,"short_left":4,"short_right":4,"shortshort":3,"shoulder":2,"sidewalk":2,"sign":2,"sign_in":2,"sign_out":2,"six_left":4,"six_left_plus":4,"six_plus_scale":3,"six_right":4,"six_right_plus":4,"six_scale":3,"slide":2,"slight":2,"slight_tightens":2,"slippy":2,"slippy_braking":2,"slippy_entry":2,"slippy_exit":2,"slow":3,"slow_crest":2,"slowing":3,"slush":2,"small":2,"small_crest":2,"small_cut":2,"small_dab":2,"small_jump":2,"small_squash":2,"small_sumppu":2,"snow":2,"snow_border":2,"spectators":2,"speed":2,"speedbump":2,"split":2,"split_time":2,"square_left":4,"square_left_plus":4,"square_plus_scale":3,"square_right":4,"square_right_plus":4,"square_scale":3,"squash":2,"stay_in_rut":2,"stay_out":2,"stay_out_of_rut":2,"steep_drop":2,"steep_hill":2,"steep_incline":2,"steep_slope":2,"steering_broke":1,"stone":2,"stone_in":2,"stone_out":2,"stop":2,"straight":2,"stump":2,"sudden":4,"sumppu":2,"surface":2,"surface_change":2,"sus_broke":1,"take":2,"take_speed":2,"tape":2,"tarmac":2,"then":2,"third_exit":2,"three_bales":2,"three_left":4,"three_left_plus":4,"three_parts":2,"three_plus_scale":3,"three_right":4,"three_right_plus":4,"three_scale":3,"three_times_dont":2,"three_times_dontcut":2,"through":2,"through_gate":2,"through_narrow_gate":2,"throws":2,"tight":2,"tightens":3,"tightens_90_":3,"tightens_90_plus":3,"tightens_abit":2,"tightens_acute":3,"tightens_at_junction":2,"tightens_bad_squash":2,"tightens_bad_sumppu":2,"tightens_big_squash":2,"tightens_big_sumppu":2,"tightens_bloodylong":2,"tightens_early":2,"tightens_five":3,"tightens_five_plus":3,"tightens_four":3,"tightens_four_plus":3,"tightens_fuckinglong":2,"tightens_halflong":2,"tightens_hp":3,"tightens_hp_plus":3,"tightens_late":2,"tightens_long":2,"tightens_longlong":2,"tightens_one":3,"tightens_one_plus":3,"tightens_open_hp":3,"tightens_opens":2,"tightens_overcrest":2,"tightens_round":2,"tightens_sharp":2,"tightens_six":3,"tightens_six_plus":3,"tightens_small_squash":2,"tightens_small_sumppu":2,"tightens_square":3,"tightens_square_plus":3,"tightens_squash":2,"tightens_sumppu":2,"tightens_three":3,"tightens_three_plus":3,"tightens_two":3,"tightens_two_plus":3,"tightens_verylong":2,"tightens_veryverylong":2,"tires":2,"tires_in":2,"tires_out":2,"to_bump":2,"to_crest":2,"to_dip":2,"to_jump":2,"to_sight_distance":2,"tofinish":4,"tree":2,"tree_in":2,"tree_out":2,"trees":2,"triple_caution":3,"triple_dont":2,"triple_dont_cut":2,"trust":2,"tunnel":2,"turn":3,"twisty":2,"twisty_from_left":2,"twisty_from_right":2,"two_bales":2,"two_left":4,"two_left_plus":4,"two_parts":2,"two_plus_scale":3,"two_right":4,"two_right_plus":4,"two_scale":3,"two_times_dont":2,"two_times_dontcut":2,"understeer":2,"unseen":2,"until":2,"up":2,"very":2,"very_short":3,"very_slippy":2,"verylong":3,"veryverylong":3,"walk":4,"wall":2,"wall_in":2,"wall_out":2,"walls":2,"watch":2,"water":2,"water_temp":1,"well_done":4,"wet":2,"weve_got_fire":1,"wide":2,"widens":2,"wideout":3,"wooden_fence":2,"worse_grip":2,"wv_lost_brakes":1};
+        const ENGLISH_WORD_VARIANT_COUNTS = {"1000_":4,"1001_":4,"100_":4,"101_":4,"10_":4,"120_":4,"121_":4,"140_":4,"141_":4,"150_":4,"151_":4,"160_":4,"161_":4,"180_":4,"181_":4,"1_":4,"200_":4,"201_":4,"20_":4,"21_":4,"250_":4,"251_":4,"2_":4,"300_":4,"301_":4,"30_":4,"31_":4,"350_":4,"351_":4,"3_":4,"400_":4,"401_":4,"40_":4,"41_":4,"450_":4,"451_":4,"4_":4,"500_":4,"501_":4,"50_":4,"51_":4,"5_":4,"600_":4,"601_":4,"60_":4,"61_":4,"6_":4,"700_":4,"701_":4,"70_":4,"71_":4,"7_":4,"800_":4,"801_":4,"80_":4,"81_":4,"8_":4,"900_":4,"901_":4,"90_":4,"90_left":4,"90_left_plus":4,"90_plus_scale":3,"90_right":4,"90_right_plus":4,"90_scale":3,"91_":4,"9_":4,"_90_":3,"_90_plus":3,"_acute":3,"_five":3,"_five_plus":3,"_flat":3,"_four":3,"_four_plus":3,"_hp":3,"_hp_plus":3,"_max":3,"_one":3,"_one_plus":3,"_open_hp":3,"_six":3,"_six_plus":3,"_square":3,"_square_plus":3,"_three":3,"_three_plus":3,"_two":3,"_two_plus":3,"a_bit":2,"a_lot":2,"acute_left":4,"acute_right":4,"acute_scale":3,"after":2,"again":4,"and":4,"at":2,"at_bale":2,"at_banner":2,"at_barrel":2,"at_black":2,"at_blue":2,"at_bridge":2,"at_bush":2,"at_car":2,"at_crest":2,"at_entry":2,"at_exit":2,"at_fence":2,"at_flag":2,"at_gate":2,"at_green":2,"at_guardrail":2,"at_house":2,"at_junction":2,"at_log":2,"at_logs":2,"at_object":2,"at_opening":2,"at_post":2,"at_red":2,"at_rock":2,"at_sign":2,"at_tape":2,"at_thing":2,"at_tree":2,"at_trees":2,"at_wall":2,"at_white":2,"at_yellow":2,"bad":3,"bad_bump":2,"bad_bump_dip":2,"bad_bump_dips":2,"bad_bumps":2,"bad_camber":1,"bad_squash":2,"bad_sumppu":2,"badcamber":2,"bale":2,"bale_in":2,"bale_out":2,"bales":2,"barrel_in":2,"barrel_out":2,"barrels":2,"batterys_flat":1,"be_brave":2,"before":2,"behind":2,"better_grip":2,"between_bales":2,"between_barrels":2,"between_tires":2,"big":2,"big_dab":2,"big_jump":2,"big_squash":2,"big_sumppu":2,"black_ice":2,"blind":2,"bloodylong":3,"border":2,"boulder":2,"brake":3,"brake_10_":3,"brake_20_":3,"brake_30_":3,"brake_40_":3,"brake_50_":3,"brake_and":3,"brake_into":3,"bridge":2,"bridge_bump":2,"brow":2,"bump":2,"bump_dip":2,"bump_dips":2,"bumps":2,"bumps_over":2,"bumpy_braking":2,"bush":2,"busstop_chicane":4,"busstop_chicane_left":4,"busstop_chicane_right":4,"camber":2,"care":3,"care_in":2,"care_out":2,"caution":3,"caution_water":2,"cautioncaution":3,"cautioncautioncaution":3,"checkpoint":2,"chicane":4,"chicane_dive_left":4,"chicane_dive_right":4,"chicane_left_entry":4,"chicane_right_entry":4,"clip":2,"cobbles":2,"concrete":2,"continues_over_brow":2,"continues_over_crest":2,"continues_over_small_crest":2,"cramped":2,"crest":2,"crest_dab":2,"crest_to_left":2,"crest_to_right":2,"curb":2,"curbside":2,"curve":2,"cut":3,"cut_through":2,"dab":2,"dab_over_jump":2,"damp":2,"deceptive":2,"deep":2,"deep_rut":2,"deep_ruts":2,"dip":2,"directly":2,"dirt":2,"dirty":2,"ditch":2,"ditch_in":2,"ditch_out":2,"done":2,"dont":3,"dont_cut":3,"dont_cut_early":2,"dont_cut_late":2,"dont_early":2,"dont_late":2,"donut_left":4,"donut_right":4,"double":2,"double_caution":3,"double_crest":2,"double_dont":2,"double_dont_cut":2,"double_jump":2,"doubletightens":3,"down":2,"drain":2,"drain_in":2,"drain_out":2,"draws_in":2,"drop_in":2,"drop_out":2,"drops":2,"drops_left":2,"drops_right":2,"dry":2,"early":3,"early_cut":2,"easy":3,"edge":2,"exact":2,"exit_lap":4,"fast":3,"fence":2,"fence_in":2,"fence_out":2,"fickle":2,"finish":4,"first_exit":2,"five_bales":2,"five_left":4,"five_left_plus":4,"five_parts":2,"five_plus_scale":3,"five_right":4,"five_right_plus":4,"five_scale":3,"flat":3,"flat_crest":2,"flat_jump":2,"flat_left":4,"flat_right":4,"flat_scale":3,"for":2,"fork_left":4,"fork_right":4,"four_bales":2,"four_left":4,"four_left_plus":4,"four_parts":2,"four_plus_scale":3,"four_right":4,"four_right_plus":4,"four_scale":3,"from":2,"from_left":2,"from_right":2,"fuckinglong":3,"full_cut":2,"gate":2,"gearbox_broke":1,"gets_faster":2,"gets_rougher":2,"gets_slower":2,"gets_smoother":2,"go":3,"go_narrow":2,"go_round":2,"go_straight":2,"go_wide":2,"good":2,"gravel":2,"grid":2,"grip":2,"grip_in":2,"grip_middle":2,"grip_out":2,"grit":2,"guardrail":2,"guardrail_in":2,"guardrail_out":2,"guardrails":2,"halflong":3,"handbrake":2,"hang":2,"hard":3,"hole":2,"hollow":2,"hook":2,"house":2,"house_in":2,"house_out":2,"hp_left":4,"hp_left_plus":4,"hp_plus_scale":3,"hp_right":4,"hp_right_plus":4,"hp_scale":3,"hug":2,"ice":2,"icy":2,"immediate":4,"important":2,"in":2,"in_and_out":2,"into":4,"island":2,"jump":2,"jump_dab":2,"jump_maybe":2,"junction":3,"junction_left":4,"junction_right":4,"keep_in":2,"keep_left":2,"keep_middle":2,"keep_out":2,"keep_right":2,"late":3,"late_cut":2,"lateish":2,"layby":2,"left":4,"left_around":4,"left_entry":2,"left_into":4,"left_over":4,"left_right":4,"leftish":2,"lift":2,"lifts":2,"light":2,"line":3,"log":2,"log_in":2,"log_out":2,"logs":2,"logs_in":2,"logs_out":2,"long":3,"long_crest":2,"long_rut":2,"long_ruts":2,"longlong":3,"loose_gravel":2,"lump":2,"many":2,"marshalls":2,"mast":2,"max_left":4,"max_right":4,"max_scale":3,"maybe":3,"maybe_slippy":2,"minus":2,"minusminus":2,"much":2,"muddy":2,"narrow":2,"narrow_bridge":2,"narrow_gate":2,"narrows":3,"near":2,"neat":2,"negative":2,"netting":2,"nips":2,"off":2,"on":2,"one_left":4,"one_left_plus":4,"one_plus_scale":3,"one_right":4,"one_right_plus":4,"one_scale":3,"onto":4,"onto_big_road":2,"onto_bridge":2,"onto_cobbles":2,"onto_concrete":2,"onto_field":2,"onto_finish":4,"onto_grass":2,"onto_gravel":2,"onto_grit":2,"onto_ice":2,"onto_narrow_bridge":2,"onto_narrower":2,"onto_nextlap":4,"onto_slush":2,"onto_small_road":2,"onto_snow":2,"onto_straight":2,"onto_tarmac":2,"onto_wider":2,"open_hp_left":4,"open_hp_right":4,"open_hp_scale":3,"opens":2,"opens_90_":3,"opens_90_plus":3,"opens_abit":2,"opens_at_junction":2,"opens_bloodylong":2,"opens_early":2,"opens_five":3,"opens_five_plus":3,"opens_flat":3,"opens_four":3,"opens_four_plus":3,"opens_fuckinglong":2,"opens_halflong":2,"opens_hp":3,"opens_hp_plus":3,"opens_late":2,"opens_long":2,"opens_longlong":2,"opens_max":3,"opens_one":3,"opens_one_plus":3,"opens_open_hp":3,"opens_overcrest":2,"opens_round":2,"opens_sharp":2,"opens_six":3,"opens_six_plus":3,"opens_square":3,"opens_square_plus":3,"opens_three":3,"opens_three_plus":3,"opens_tightens":2,"opens_two":3,"opens_two_plus":3,"opens_verylong":2,"opens_veryverylong":2,"out":2,"over":2,"over_big_jump":2,"over_bridge":2,"over_brow":2,"over_crest":2,"over_early_and_late_crest":2,"over_early_crest":2,"over_jump":2,"over_jump_dab":2,"over_jump_maybe":2,"over_late_crest":2,"over_long_crest":2,"over_narrow_bridge":2,"over_rails":2,"over_rocks":2,"over_small_crest":2,"over_small_jump":2,"over_three_crests":2,"over_two_crests":2,"past_junction":2,"path":2,"patient":2,"plus":2,"plusplus":2,"positive":2,"post":2,"post_early":2,"post_in":2,"post_late":2,"post_out":2,"posts":2,"precise":2,"problem_engine":1,"puddle":2,"rails":2,"remember":2,"right":4,"right_around":4,"right_entry":2,"right_into":4,"right_left":4,"right_over":4,"rightish":2,"road":2,"rock":2,"rocks":2,"rocks_in":2,"rocks_out":2,"rotate":3,"round":3,"roundabout":2,"rubble":2,"rut":2,"ruts":2,"scale_minus":2,"scale_plus":2,"second_exit":2,"see":2,"sharp":3,"shit":2,"short":3,"short_left":4,"short_right":4,"shortshort":3,"shoulder":2,"sidewalk":2,"sign":2,"sign_in":2,"sign_out":2,"six_left":4,"six_left_plus":4,"six_plus_scale":3,"six_right":4,"six_right_plus":4,"six_scale":3,"slide":2,"slight":2,"slight_tightens":2,"slippy":2,"slippy_braking":2,"slippy_entry":2,"slippy_exit":2,"slow":3,"slow_crest":2,"slowing":3,"slush":2,"small":2,"small_crest":2,"small_cut":2,"small_dab":2,"small_jump":2,"small_squash":2,"small_sumppu":2,"snow":2,"snow_border":2,"spectators":2,"speed":2,"speedbump":2,"split":2,"split_time":2,"square_left":4,"square_left_plus":4,"square_plus_scale":3,"square_right":4,"square_right_plus":4,"square_scale":3,"squash":2,"stay_in_rut":2,"stay_out":2,"stay_out_of_rut":2,"steep_drop":2,"steep_hill":2,"steep_incline":2,"steep_slope":2,"steering_broke":1,"stone":2,"stone_in":2,"stone_out":2,"stop":2,"straight":2,"stump":2,"sudden":4,"sumppu":2,"surface":2,"surface_change":2,"sus_broke":1,"take":2,"take_speed":2,"tape":2,"tarmac":2,"then":2,"third_exit":2,"three_bales":2,"three_left":4,"three_left_plus":4,"three_parts":2,"three_plus_scale":3,"three_right":4,"three_right_plus":4,"three_scale":3,"three_times_dont":2,"three_times_dontcut":2,"through":2,"through_gate":2,"through_narrow_gate":2,"throws":2,"tight":2,"tightens":3,"tightens_90_":3,"tightens_90_plus":3,"tightens_abit":2,"tightens_acute":3,"tightens_at_junction":2,"tightens_bad_squash":2,"tightens_bad_sumppu":2,"tightens_big_squash":2,"tightens_big_sumppu":2,"tightens_bloodylong":2,"tightens_early":2,"tightens_five":3,"tightens_five_plus":3,"tightens_four":3,"tightens_four_plus":3,"tightens_fuckinglong":2,"tightens_halflong":2,"tightens_hp":3,"tightens_hp_plus":3,"tightens_late":2,"tightens_long":2,"tightens_longlong":2,"tightens_one":3,"tightens_one_plus":3,"tightens_open_hp":3,"tightens_opens":2,"tightens_overcrest":2,"tightens_round":2,"tightens_sharp":2,"tightens_six":3,"tightens_six_plus":3,"tightens_small_squash":2,"tightens_small_sumppu":2,"tightens_square":3,"tightens_square_plus":3,"tightens_squash":2,"tightens_sumppu":2,"tightens_three":3,"tightens_three_plus":3,"tightens_two":3,"tightens_two_plus":3,"tightens_verylong":2,"tightens_veryverylong":2,"tires":2,"tires_in":2,"tires_out":2,"to_bump":2,"to_crest":2,"to_dip":2,"to_jump":2,"to_sight_distance":2,"tofinish":4,"tree":2,"tree_in":2,"tree_out":2,"trees":2,"triple_caution":3,"triple_dont":2,"triple_dont_cut":2,"trust":2,"tunnel":2,"turn":3,"twisty":2,"twisty_from_left":2,"twisty_from_right":2,"two_bales":2,"two_left":4,"two_left_plus":4,"two_parts":2,"two_plus_scale":3,"two_right":4,"two_right_plus":4,"two_scale":3,"two_times_dont":2,"two_times_dontcut":2,"understeer":2,"unseen":2,"until":2,"up":2,"very":2,"very_short":3,"very_slippy":2,"verylong":3,"veryverylong":3,"walk":4,"wall":2,"wall_in":2,"wall_out":2,"walls":2,"watch":2,"water":2,"water_temp":1,"well_done":4,"wet":2,"weve_got_fire":1,"wide":2,"widens":2,"wideout":3,"wooden_fence":2,"worse_grip":2,"wv_lost_brakes":1};
 
         const SILENCE_FILENAME = 'silence650.ogg';
 
-        const impactSpeechFiles = [
+        const ENGLISH_IMPACT_SPEECH_FILES = [
             { file: 'Oh_no.wav', phrase: 'Oh no!' },
             { file: 'oh_no1.wav', phrase: 'Oh no!' },
             { file: 'oh_no2.wav', phrase: 'Oh no!' },
@@ -516,11 +532,11 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             { file: 'watch3.wav', phrase: 'Watch it!' }
         ];
 
-        const gameSpeechFiles = [
+        const ENGLISH_GAME_SPEECH_FILES = [
             { file: 'Go.wav', phrase: 'Go!' }
         ];
 
-        const numberSpeechFiles = [
+        const ENGLISH_NUMBER_SPEECH_FILES = [
             { file: 'start1.ogg', phrase: 'Three' },
             { file: 'start2.ogg', phrase: 'Two' },
             { file: 'start3.ogg', phrase: 'One' }
@@ -531,7 +547,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             'sus_broke', 'water_temp', 'weve_got_fire', 'wv_lost_brakes'
         ];
 
-        const displayOverrides = {
+        const ENGLISH_DISPLAY_OVERRIDES = {
             batterys_flat: "The battery's flat",
             gearbox_broke: "Gearbox is broken",
             problem_engine: "Problem with the engine",
@@ -543,14 +559,32 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             dont_cut: "Don't Cut"
         };
 
-        const completeSoundManifest = [];
-        Object.keys(pacenoteWordVariantCounts).forEach(base => {
-            const count = pacenoteWordVariantCounts[base];
-            for (let v = 1; v <= count; v++) { completeSoundManifest.push(`${base}${v}`); }
-        });
-        impactSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
-        gameSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
-        numberSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+        // ---------------------------------------------------------------
+        // PHASE 2: these five identifiers are now mutable "active language"
+        // pointers instead of fixed English constants. They default to the
+        // English data above, so nothing changes unless/until the user
+        // actually picks Finnish from the new language selector.
+        // switchLanguage() (defined further down, after FINNISH_PACK) is
+        // the only place that reassigns them.
+        // ---------------------------------------------------------------
+        let pacenoteWordVariantCounts = ENGLISH_WORD_VARIANT_COUNTS;
+        let impactSpeechFiles = ENGLISH_IMPACT_SPEECH_FILES;
+        let gameSpeechFiles = ENGLISH_GAME_SPEECH_FILES;
+        let numberSpeechFiles = ENGLISH_NUMBER_SPEECH_FILES;
+        let displayOverrides = ENGLISH_DISPLAY_OVERRIDES;
+
+        let completeSoundManifest = [];
+        function rebuildCompleteSoundManifest() {
+            completeSoundManifest = [];
+            Object.keys(pacenoteWordVariantCounts).forEach(base => {
+                const count = pacenoteWordVariantCounts[base];
+                for (let v = 1; v <= count; v++) { completeSoundManifest.push(`${base}${v}`); }
+            });
+            impactSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+            gameSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+            numberSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
+        }
+        rebuildCompleteSoundManifest();
 const TARGET_SCRIPT_LENGTH = 20; 
 
         const CORNER_WORD_SET = new Set([
@@ -615,8 +649,73 @@ const TARGET_SCRIPT_LENGTH = 20;
         CORNER_WORD_SET.add('_round_hp');
         CORNER_WORD_SET.add('_tight_hp');
 
-        // Active language state - not yet read by any function (Phase 2).
+        // Active language state - now read by switchLanguage() (Phase 2).
         let currentLanguage = 'en';
+
+        // ---------------------------------------------------------------
+        // PHASE 2: Language switching engine. Swaps the active word/
+        // manifest data between English and Finnish's raw Phase-1
+        // structure. Deliberately NOT yet wired in this phase:
+        //   - Per-word translated display text (still Phase 3 — the
+        //     script generator/matrix grid need to consult
+        //     FINNISH_PACK.displayTranslations word-by-word).
+        //   - Merged Finnish tooltip definitions (Phase 4).
+        //   - Finnish export packaging — folder path, .ini header, and
+        //     broken-call handling in exportStructuredZip() still assume
+        //     English (Phase 5). Export is intentionally blocked while a
+        //     non-English language is active; see updateLanguageExportGuard().
+        // ---------------------------------------------------------------
+        function switchLanguage(lang) {
+            if (lang === currentLanguage) return;
+
+            if (lang === 'fi') {
+                pacenoteWordVariantCounts = FINNISH_PACK.wordVariantCounts;
+                impactSpeechFiles = FINNISH_PACK.impactSpeechFiles;
+                gameSpeechFiles = FINNISH_PACK.gameSpeechFiles;
+                numberSpeechFiles = FINNISH_PACK.numberSpeechFiles;
+                displayOverrides = FINNISH_PACK.brokenDisplayOverrides;
+                currentLanguage = 'fi';
+            } else {
+                pacenoteWordVariantCounts = ENGLISH_WORD_VARIANT_COUNTS;
+                impactSpeechFiles = ENGLISH_IMPACT_SPEECH_FILES;
+                gameSpeechFiles = ENGLISH_GAME_SPEECH_FILES;
+                numberSpeechFiles = ENGLISH_NUMBER_SPEECH_FILES;
+                displayOverrides = ENGLISH_DISPLAY_OVERRIDES;
+                currentLanguage = 'en';
+            }
+
+            rebuildCompleteSoundManifest();
+            rebuildConcatenativeScripts();
+            currentScriptIndex = 0;
+            activeTargetFileKey = null;
+
+            updateMasterProgressMetrics();
+            renderTokenMatrixGrid();
+            if (currentWorkflowMode === 'script') {
+                loadScriptIndex(0);
+            } else {
+                const tokenDisplay = document.getElementById('target-token-display');
+                if (tokenDisplay) tokenDisplay.innerText = "SELECT TARGET GRID FILE ELEMENT";
+            }
+
+            updateLanguageExportGuard();
+
+            logToConsole(currentLanguage === 'fi'
+                ? `Language switched to Finnish (Numeronuotti A) — Phase 2 preview: word set + manifest are live (${completeSoundManifest.length} files). Translated display text and tooltips arrive in Phase 3/4; export re-enables in Phase 5.`
+                : 'Language switched to English.');
+        }
+
+        function updateLanguageExportGuard() {
+            const btn = document.getElementById('export-zip-btn');
+            if (!btn) return;
+            if (currentLanguage !== 'en') {
+                btn.disabled = true;
+                btn.title = 'Finnish export packaging (correct sounds folder + config format) is scheduled for Phase 5. Switch back to English to export now.';
+            } else {
+                btn.disabled = false;
+                btn.title = '';
+            }
+        }
 
         function categorizeBaseTokens() {
             const pools = { DISTANCE: [], CORNER: [], DIRECTION: [], CONNECTOR: [], VOCAB: [] };
@@ -851,7 +950,10 @@ const TARGET_SCRIPT_LENGTH = 20;
             return scripts;
         }
 
-        const concatenativeScripts = generateRequiredSoundScripts().concat(generateSpecialCallScripts());
+        let concatenativeScripts = generateRequiredSoundScripts().concat(generateSpecialCallScripts());
+        function rebuildConcatenativeScripts() {
+            concatenativeScripts = generateRequiredSoundScripts().concat(generateSpecialCallScripts());
+        }
 
         // Restored: these two data blocks were missing from this build,
         // which would have thrown a ReferenceError the first time any
@@ -1976,6 +2078,10 @@ const TARGET_SCRIPT_LENGTH = 20;
         }
 
         async function exportStructuredZip() {
+            if (currentLanguage !== 'en') {
+                logToConsole('Export blocked: Finnish package export (correct sounds folder path + config handling) is scheduled for Phase 5. Switch the Language selector back to English to export now.');
+                return;
+            }
             logCompliancePreExportReport();
             logToConsole("Compressing deployment file payload... Applying DSP transformations where active.");
             const zip = new JSZip();
@@ -2359,6 +2465,7 @@ const TARGET_SCRIPT_LENGTH = 20;
         }
 
         renderTokenMatrixGrid();
+        updateLanguageExportGuard();
         const nextBtn = document.getElementById('next-script-btn');
         if(nextBtn) nextBtn.style.display = 'inline-block';
 
@@ -2402,7 +2509,7 @@ const TARGET_SCRIPT_LENGTH = 20;
         }
 
         function generatePacenoteConfigINI() {
-            let iniContent = `; Word -> File reference map for "${codriverName}" - Generated by RBR Recorder Studio v3.0.3\n`;
+            let iniContent = `; Word -> File reference map for "${codriverName}" - Generated by RBR Recorder Studio v${currentVersion}\n`;
             iniContent += "; NOT the real plugin config format (see Plugins/Pacenote/config/ + language/ for that) — reference only.\n\n";
 
             iniContent += "; --- Main pacenote words: Plugins/Pacenote/sounds/NickyGristV3 (benofficial2)/ ---\n\n";
