@@ -1,205 +1,177 @@
 # 🎙️ Pacenote Recorder Studio
 
-> An all-in-one browser-based audio engineering suite and procedural script engine designed for recording, processing, auditioning, and exporting custom co-driver voice packs for the **Richard Burns Rally (RBR) Pacenote Plugin**.
+[Live demo](https://studio.cauch.uk) · [Issues](https://github.com/yiyirob973/Pacenote-Recorder-Studio/issues) · License: MIT
 
-Live version located at https://studio.cauch.uk
+An all-in-one, browser-based audio engineering suite and procedural script engine designed for recording, processing, auditioning, and exporting complete custom co-driver voice packs for Richard Burns Rally (RBR).
 
----
+## Overview
+Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co-driver voice packs: from rhythmic recording and automated silence slicing to DSP auditioning and plug-and-play package export compatible with WorkerBee's Pacenote Plugin. It is implemented as a single-file client-side web application (HTML/JS/CSS), uses the Web Audio API for recording and processing, IndexedDB for local persistence, and JSZip for in-browser ZIP generation.
 
-## 🤖 AI-Assisted Development & Architecture
+## Quick links
+- Demo: https://studio.cauch.uk
+- Repo: https://github.com/yiyirob973/Pacenote-Recorder-Studio
+- Report an issue: https://github.com/yiyirob973/Pacenote-Recorder-Studio/issues
+- License: MIT (see LICENSE)
 
-This software was entirely architected, designed, and generated through conversational **AI collaboration**. 
+## Table of contents
+- Features
+- Architecture & audio pipeline
+- How to use
+- Run locally (development)
+- Browser support & known issues
+- Privacy & data handling
+- Export / Install into RBR
+- Accessibility
+- Troubleshooting
+- Credits
+- Contributing
+- License
 
-* **Procedural Logic Generation**: The 20-word script balancing algorithms, token boundary slicers, and RBR variant mapping (`_1`, `_2`, `_3`, `_4`) were synthesized by AI.
-* **Audio Engineering & DSP Nodes**: Real-time Web Audio API graphs—including RMS-driven silence trimming limiters, peak normalizers, and bandpass overdrive intercom filters—were engineered using AI-driven code generation.
-* **Zero-Framework Architecture**: Prompted and constructed as a self-contained, single-file HTML/JS/CSS client-side web application without external heavy framework dependencies.
+## Key features
+- Procedural 20-word script engine that balances numeric distances, severities, directions, and connectors into natural reading blocks.
+- Rhythmic beat metronome with adjustable WPM and pre-roll countdown for consistent cadence.
+- File upload for pre-recorded sourcing and microphone capture with pre-roll.
+- RMS-based silence trimming and slice engine to extract individual pacenote tokens automatically.
+- Peak volume normalization across sessions to equalize loudness.
+- Real-time radio/intercom DSP (bandpass, saturation/drive presets) for auditioning authentic cockpit comms.
+- IndexedDB persistence (RBRStudioDB) for offline session storage and cross-tab recovery.
+- In-browser ZIP export that produces a plug-and-play directory matching WorkerBee's Pacenote Plugin structure.
+- Stage Fluidity Playground to audition random pacenote chains for transition testing.
 
----
+## Architecture & audio processing pipeline
+[ Microphone / File Input ]
+            ↓
+   [ AudioContext / AudioWorklet ]
+            ↓
+   [ Rhythmic Beat Guidance / Capture ]
+            ↓
+   [ RMS Silence Trimmer ] → (trim pre/post silence)
+            ↓
+   [ Slice Engine ]         → (split multi-word buffers to tokens)
+            ↓
+   [ Peak Volume Normalizer ] → (scale amplitudes)
+            ↓
+   [ Radio Intercom DSP Graph ] → (audition overdrive & bandpass)
+            ↓
+   [ IndexedDB Cache / JSZip Export ] → (local state & export)
 
-## 🙏 Credits & Acknowledgments
+## How to use (end user)
+1. Open the application in a modern desktop browser (Chrome, Edge, Firefox recommended; see Browser support).
+2. Step 1 — Initialize audio:
+   - Click "🎙️ Step 1: Initialize Audio Context Stream".
+   - Choose a microphone input.
+   - Note: getUserMedia requires a secure context (HTTPS or localhost).
+3. Step 2 — Configure profile:
+   - Enter Co-Driver Name (used for file/INI metadata).
+   - Create or select a Codriver Profile.
+   - Adjust Reading Pace (WPM), Pre-Roll Delay, Silence Threshold.
+4. Step 3 — Record:
+   - Press "🔴 Start Recording" (or use the spacebar).
+   - Follow pre-roll and metronome; speak each highlighted word on the beat.
+   - Press "⏹️ Stop / Process" to slice the recording into tokens.
+   - Use "➡️ Accept & Next Script" to advance.
+5. Step 4 — Audit & Normalize:
+   - Use Stage Fluidity Playground: "Construct Random String" → "Audition Run".
+   - Normalize volumes to target peak (UI control available).
+6. Step 5 — Export:
+   - Click "📥 Export Plug-and-Play Package (.zip)".
+   - Extract into your Richard Burns Rally installation (see Export/Install section).
 
-Credit goes to the foundational projects, developers, and community pioneers who made custom rally pacenotes possible:
+## Run locally (development)
+This project is a single-file client-side app and requires a static server due to browser secure-context restrictions for microphone access.
 
-* **Luppis & Janne** — For their invaluable contributions, foundational work, testing, and pioneer voice/pacenote structures that laid the groundwork for modern RBR co-driver sound sets.
-* **WorkerBee (Guenter Schlupf)** — Creator and main developer of the legendary **RBR Pacenote Plugin**. His work revolutionized *Richard Burns Rally* by enabling custom callouts, extended terminology, and external `.ogg` audio mapping.
-* **The Global RBR Community (Czech, French, Vauhtimurot, OverTake, and RSF)** — For pioneering extended pacenote terminology, recording standards, and keeping RBR alive as the premier rally simulator.
-* **JSZip Project Team** — Stuart Knightley, David Duponchel, Franz Buchinger, and Stephen Eminizer for their client-side zip creation library (`jszip.min.js`).
-* **Warthog Games & SCi Games** — Developers and publishers of the original *Richard Burns Rally* (2004).
+Examples:
+- Python 3: python -m http.server 8000
+- Node (serve): npx serve . -p 8000
+- Node (http-server): npx http-server -p 8000
 
----
+Then open: http://localhost:8000 (or https://localhost with an HTTPS server). getUserMedia only works on HTTPS pages or on localhost.
 
-## 📜 Development Origins & Pre-Repo History
+If the repo later includes build tooling, follow the project's CONTRIBUTING.md for build steps. Currently there is no build step required.
 
-Before being structured into this formal GitHub repository, **Pacenote Recorder Studio** underwent several iterative AI generation prompt sessions as a local web utility to solve the painstaking process of manual pacenote creation.
+## Browser support & known issues
+- Recommended: Desktop Chrome, Edge, Firefox (latest versions).
+- Safari (macOS/iOS): partial support — AudioWorklet and long-running recording behavior may differ; use the latest Safari and test carefully.
+- Mobile browsers: not recommended for full session recording (permissions, tab suspensions, and background recording limitations).
+- AudioWorklet vs ScriptProcessorNode: behavior and latency differ; check the console if the app falls back to ScriptProcessorNode.
+- Autoplay restrictions: browsers may require a user interaction to enable audio playback; ensure you click/initiate before auditioning.
 
-### Pre-Repository Milestone Changelog
+## Privacy & data handling
+- Local-first: Recordings and session buffers are stored in your browser's IndexedDB database named `RBRStudioDB`. By default no audio or project data is uploaded to any external server.
+- Clearing data:
+  - Use the app's "Delete Project" or "Clear Session" UI controls (if available).
+  - Or in browser DevTools: Application → IndexedDB → delete `RBRStudioDB`.
+- Exported ZIPs: exporting produces files you can share. Be careful when sharing personal recordings.
+- If you add telemetry, analytics, or third-party uploads later, the README will be updated to describe opt-out instructions.
 
-* **Phase 1: Script & Concatenation Engine**
-  * Built initial 20-word procedural script engine to balance distance calls, corner severities, and connectors into readable blocks.
-  * Formatted RBR token naming patterns and established strict variant mapping (`_1`, `_2`, `_3`, `_4`).
+## Exporting and installing into Richard Burns Rally
+Export produces a ZIP structured to match WorkerBee's Pacenote Plugin layout.
 
-* **Phase 2: Web Audio API Integration & RMS Trimming**
-  * Integrated direct browser microphone capture with configurable pre-roll delay and metronome guidance.
-  * Implemented real-time Web Audio API signal processing, adding automated RMS-based silence trimming to cleanly split recorded strings into isolated tokens.
+Example exported folder structure:
+Richard Burns Rally/
+└── Plugins/
+    └── Pacenote/
+        ├── sounds/
+        │   └── <your_codriver_name>/
+        │       ├── 100_1.ogg
+        │       ├── 100_2.ogg
+        │       ├── acute_left1.ogg
+        │       ├── dont_cut1.ogg
+        │       └── Audio/
+        │           └── Speech/
+        │               └── Number/
+        │                   ├── start1.ogg
+        │                   └── start2.ogg
+        └── PaceNote.ini  (update sounds=<your_codriver_name>)
 
-* **Phase 3: DSP Intercom Simulation & Peak Normalization**
-  * Added active bandpass filtering and saturation drive to simulate authentic cockpit comms (e.g., Stilo radio intercoms).
-  * Implemented peak normalization to eliminate volume disparities across multi-hour recording sessions.
+Install steps:
+1. Extract the exported ZIP.
+2. Copy the plugins folder into your RBR installation directory so the path matches: Richard Burns Rally/Plugins/Pacenote/.
+3. Edit PaceNote.ini and set sounds=<your_codriver_name>.
+4. Launch RBR and select the Pacenote plugin.
 
-* **Phase 4: Persistence, Auditioning & Package Generation**
-  * Migrated local audio buffer caching to `IndexedDB` (`RBRStudioDB`) to protect progress against browser reloads.
-  * Added the *Stage Fluidity Playground* for live auditioning of procedural note chains.
-  * Integrated JSZip for instant, plug-and-play `.zip` generation matching WorkerBee's plugin directory structure.
+## Accessibility
+- Keyboard: keyboard shortcuts are available for primary controls (initialize, record, stop, export). See the in-app help for the complete list.
+- Screen readers: major UI elements include ARIA labels where applicable. If you rely on screen reader support, please test the demo and file issues for gaps.
+- Color & contrast: severity markers are color-coded and accompanied by text/tooltips; color is not the only indicator.
 
----
+## Troubleshooting
+- No microphone found: confirm the browser has permission to access the microphone and that the device is selected in system settings.
+- getUserMedia denied: refresh the page and grant permission, or change site permissions in browser settings.
+- Large project fails to save: browser IndexedDB quota may be reached — export your project and clear session data. Different browsers enforce different quotas.
+- Playback stuttering: try a lower buffer size or use a different browser; check CPU usage and close other heavy apps.
+- Exported files not recognized by RBR: make sure the ZIP was extracted to the correct Plugins/Pacenote/ path and PaceNote.ini points to the codriver folder.
 
-## 🚀 Overview
+## Technical notes & limitations
+- Storage: Long multi-hour recordings may be large; expect browser-specific storage quotas.
+- Formats: Exports produce `.ogg` (and/or `.wav` depending on the UI choice). Sample rates and bitrates are set to browser defaults unless overridden in advanced settings.
+- DSP: Radio/intercom presets are implemented with Web Audio nodes (filter + wave-shaping). Auditioning is approximate and intended for preview; final in-game sound may require fine tuning.
 
-Creating a complete custom co-driver voice pack for *Richard Burns Rally* traditionally required manually recording and trimming hundreds of individual audio files with consistent volume, cadence, and naming conventions. 
+## Security & third-party dependencies
+- JSZip (v3.10.1) is used for ZIP generation. If included from a CDN, a Subresource Integrity (SRI) hash is recommended.
+- No remote uploads by default—any addition of analytics or remote storage will be documented and require opt-in.
 
-**Pacenote Recorder Studio** streamlines this entire workflow into a single client-side web application. It combines a **procedural script engine** (which balances words across 20-word reading blocks), **rhythmic beat pacing**, **automatic silence trimming via RMS**, **DSP intercom simulation**, and **direct plug-and-play package generation**.
+## Credits & acknowledgments
+Thanks to the RBR modding and pacenote communities whose terminology, tooling, and plugin formats informed this project.
+- Luppis & Janne — pacenote terminology and structures
+- WorkerBee (Guenter Schlupf) — RBR Pacenote Plugin (format inspiration)
+- JSZip project contributors
+- The global RBR community for testing and feedback
 
----
+## Contributing
+Contributions are welcome. Please:
+1. Fork the repo.
+2. Create a feature branch: git checkout -b fix/readme
+3. Commit with a clear message and open a pull request.
+4. Add tests or a brief explanation for regressions.
 
-## ✨ Key Features
+When opening issues, include:
+- Browser and version
+- Operating system
+- Steps to reproduce
+- Console logs/screenshots if relevant
 
-### 📋 Procedural Scripting & Workflow Engine
-* **Balanced 20-Word Concatenative Scripts**: Automatically distributes distance calls, corner severities, directions, connectors, and vocabulary into natural reading blocks.
-* **Targeted Individual Token Mode**: Direct matrix view to jump to and re-record specific single tokens, impacts, or countdown calls.
-* **Severity & Usage Hints**: Hover tooltips show exact RBR context, call definitions, and color-coded severity markers (Urgent, Elevated, Firm, Warm, Neutral).
-* **Multiple Co-Driver Profiles**: Manage distinct co-driver voice sets side-by-side within the same browser session.
-
-### 🎙️ Rhythmic Recording & Audio Acquisition
-* **Visual Beat Metronome**: Rhythmic tempo guidance (adjustable WPM) to keep callout cadence consistent across multi-hour recording sessions.
-* **Pre-Roll Delay & Countdowns**: Configurable pre-roll delay before recording starts.
-* **File Upload Support**: Upload pre-recorded external audio source files for slicing and processing.
-
-### 🎛️ Web Audio API Signal Processing & DSP
-* **RMS Silence Trimming**: Detects audio threshold boundaries and strips silence based on configurable millisecond breaks and RMS limiters.
-* **Peak Volume Normalization**: Normalizes captured audio buffers across the entire session to target peak levels (e.g., 0.95 peak).
-* **Co-Driver Intercom Radio DSP**: Real-time cockpit comms simulation featuring microphone saturation/drive and bandpass filters:
-  * *Stilo Vintage Low-Fi* (300Hz - 3.5kHz)
-  * *Clear Comms* (150Hz - 6.0kHz)
-  * *Aggressive Cockpit Radio Distortion*
-
-### 🎲 Stage Fluidity Playground
-* **Live Cadence Auditioning**: Generates random pacenote chains strictly from your recorded voice buffers. Test transition clipping, phrasing, and speed before exporting to RBR.
-
-### 💾 Persistence & Package Export
-* **IndexedDB Session Storage**: Keeps PCM audio buffers saved safely in browser storage (`RBRStudioDB`) across browser restarts.
-* **Portable Project Backups**: Export or import complete raw project archives (`.zip`) for cross-device migration.
-* **Plug-and-Play Package Export**: Generates ready-to-use directory structures matching RBR's `Plugins/Pacenote/` format, complete with `_HOW_TO_INSTALL.txt` and formatted `.ogg` files.
-## 🛠️ Audio Processing Pipeline
-
-    [ Microphone / File Input ]
-                │
-                ▼
-       [ AudioContext Stream ]
-                │
-                ▼
-    [ Rhythmic Beat Guidance / Capture ]
-                │
-                ▼
-       [ RMS Silence Trimmer ] ──► (Trims pre/post silence)
-                │
-                ▼
-       [ Slice Engine ]         ──► (Slices multi-word script buffers into individual tokens)
-                │
-                ▼
-     [ Peak Volume Normalizer ] ──► (Scales waveform amplitudes)
-                │
-                ▼
-     [ Radio Intercom DSP Graph] ──► (Audition overdrive & bandpass clamping)
-                │
-                ▼
-     [ IndexedDB Cache / ZIP ]  ──► (Local state & Plug-and-Play RBR export)
-
----
-
-## 📖 How to Use
-
-### Step 1: Initialize Audio Context
-1. Open the application in a modern browser (Chrome, Edge, Firefox, Safari).
-2. Click **🎙️ Step 1: Initialize Audio Context Stream**.
-3. Select your input microphone from the dropdown menu.
-
-### Step 2: Configure Profile & Parameters
-1. Enter your **Co-Driver Name** (used for `.ini` metadata and file naming).
-2. Choose or create a **Codriver Profile**.
-3. Adjust **Reading Pace (WPM)**, **Pre-Roll Delay**, and **Silence Threshold** as needed.
-
-### Step 3: Record Voice Scripts
-1. Press **🔴 Start Recording** (or use the spacebar/controls).
-2. Follow the yellow pre-roll countdown and speak each highlighted word on the beat.
-3. Click **⏹️ Stop / Process** to slice the recording into individual pacenote tokens.
-4. Click **➡️ Accept & Next Script** to advance through the manifest.
-
-### Step 4: Audit & Normalize
-1. Open the **Stage Fluidity Playground** panel and click **🎲 Construct Random String** followed by **🔊 Audition Run** to test voice transitions.
-2. Click **Normalize Volumes** under *Session State Control* to ensure peak levels are balanced.
-
-### Step 5: Export to RBR
-1. Click **📥 Export Plug-and-Play Package (.ZIP)** under the *System Manifest Matrix Inventory*.
-2. Extract the resulting zip file into your *Richard Burns Rally* installation directory.
-
----
-
-## 📁 RBR Folder Structure & Installation
-
-Extracted zip packages mirror the standard layout required by **WorkerBee's Pacenote Plugin**:
-
-    Richard Burns Rally/
-    └── Plugins/
-        └── Pacenote/
-            ├── sounds/
-            │   └── <your_codriver_name>/
-            │       ├── 100_1.ogg
-            │       ├── 100_2.ogg
-            │       ├── acute_left1.ogg
-            │       ├── dont_cut1.ogg
-            │       ├── Audio/
-            │       │   ├── Impact/
-            │       │   │   └── Speech/
-            │       │   │       ├── Oh_no.wav
-            │       │   │       └── ugh.wav
-            │       │   ├── Game/
-            │       │   │   └── Go.wav
-            │       │   └── Speech/
-            │       │       └── Number/
-            │       │           ├── start1.ogg
-            │       │           ├── start2.ogg
-            │       │           └── start3.ogg
-            │       └── silence650.ogg
-            └── PaceNote.ini  (Update sounds=<your_codriver_name>)
-## 📊 Pacenote Coverage Manifest
-
-Pacenote Recorder Studio tracks and generates full variant coverage across:
-
-| Call Category | Descriptions & Variants |
-| :--- | :--- |
-| **Numeric Distances** | `10_` through `1000_` (4 variants per distance call) |
-| **Corner Severities** | `1_` through `6_`, `flat_`, `acute_`, `hp_`, `square_`, `max_` |
-| **Corner Modifiers** | `plus`, `minus`, `tightens`, `opens`, `early`, `late` |
-| **Directions** | `left`, `right`, `leftish`, `rightish` |
-| **Connectors** | `and`, `into`, `onto`, `over`, `through`, `then`, `at`, `for` |
-| **Hazards & Terrain** | `dont_cut`, `crest`, `jump`, `dip`, `bad_camber`, `ruts`, `rocks`, `bales`, etc. |
-| **Special Reactions** | Impact voice lines (`oh_no`, `ugh`, `watch`), Stage Start (`Go`), and Countdowns (`start1`, `start2`, `start3`) |
-
----
-
-## 🛠️ Built With
-
-* **AI Collaboration**: Built, architected, and coded with AI assistance.
-* **HTML5 & CSS3**: Responsive UI with dark-theme studio styling.
-* **Vanilla JavaScript (ES6+)**: Standalone engine execution without external framework overhead.
-* **Web Audio API**: Real-time audio recording, buffer manipulation, RMS threshold analysis, and DSP filtering graphs.
-* **IndexedDB**: Asynchronous client-side data storage (`RBRStudioDB`) for storing recorded PCM audio buffers.
-* **JSZip (v3.10.1)**: In-browser archive generation for backup and export packages.
-
----
-
-## 📄 License
-
-Distributed under the **MIT License**. See `LICENSE` for details.
+## License
+This project is distributed under the MIT License — see `LICENSE` for details.
 
 *Richard Burns Rally is a trademark of SCi Games / Warthog Games. This project is an independent community development utility not affiliated with or endorsed by SCi Games.*
