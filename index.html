@@ -2,7 +2,7 @@
 <!--
 
 PACENOTE RECORDER STUDIO - ARCHITECTURE & FUNCTION INDEX
-Version: 3.10.1
+Version: 3.13.1
 
 APP OVERVIEW:
 A browser-based audio engineering suite for the RBR Pacenote Plugin.
@@ -184,6 +184,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         .matrix-item { display: flex; justify-content: space-between; align-items: center; background: #2d3748; padding: 6px 10px; border-radius: 4px; font-size: 0.75rem; font-family: monospace; cursor: pointer; }
         .matrix-item:hover { background: #4a5568; }
         .matrix-item.recorded { background: #234e52; border-left: 4px solid #319795; color: #e6fffa; }
+        .matrix-item.phase1-core:not(.recorded) { box-shadow: inset 0 0 0 1px #d69e2e; }
         .matrix-item.active-target { background: #7b341e; border: 1px solid #dd6b20; }
         .matrix-item-impact { border-left: 4px solid #dd6b20; }
         .matrix-item-impact.recorded { background: #4a2f10; border-left: 4px solid #dd6b20; color: #fbd38d; }
@@ -232,6 +233,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             .grid-container { grid-template-columns: 1fr; }
             .control-group { flex-direction: column; align-items: stretch; }
             .control-group > div, .control-group button, .upload-btn { width: 100%; margin-bottom: 5px; }
+            #export-progress-grid { grid-template-columns: 1fr !important; }
             button, .upload-btn, input[type="file"], select, input[type="number"], input[type="range"], input[type="text"] { min-height: 50px; font-size: 1rem; }
             .tab-bar { flex-direction: column; }
             .tab { text-align: center; border-radius: 4px; margin-bottom: 4px; padding: 12px; }
@@ -385,17 +387,42 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
                     <span><span style="display:inline-block; width:10px; height:10px; background:#dd6b20; border-radius:2px; margin-right:4px;"></span>Impact (Audio/Impact/Speech)</span>
                     <span><span style="display:inline-block; width:10px; height:10px; background:#d69e2e; border-radius:2px; margin-right:4px;"></span>Go / Start countdown</span>
                 </div>
-                <div class="control-group" style="display: grid; grid-template-columns: auto 1fr; gap: 20px;">
+                <div class="control-group" id="export-progress-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 20px;">
                     <div>
                         <button class="action-btn" id="export-zip-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
                         <div style="font-size:0.68rem; color:#718096; margin-top:4px; text-align:center;">Encodes real Ogg Vorbis where possible (falls back to WAV-with-.ogg-extension automatically if unavailable) — see the export log and _HOW_TO_INSTALL.txt for what this run actually produced.</div>
+                        <div class="progress-container" id="export-progress-container" style="height:20px; margin-top:8px; display:none;">
+                            <div class="progress-bar" id="export-progress-bar" style="background:#9f7aea;"></div>
+                            <div class="progress-text" id="export-progress-text">Preparing export…</div>
+                        </div>
                     </div>
-                    <div class="progress-container" style="margin-top: auto; margin-bottom: auto;">
-                        <div class="progress-bar" id="master-progress"></div>
-                        <div class="progress-text" id="master-progress-text">0 / -- Required Files Captured (0%)</div>
+                    <div>
+                        <div class="progress-container" style="margin-top: auto; margin-bottom: auto;">
+                            <div class="progress-bar" id="master-progress"></div>
+                            <div class="progress-text" id="master-progress-text">0 / -- Total Files Captured (0%)</div>
+                        </div>
                         <div id="bonus-progress-text" style="font-size:0.75rem; color:#a0aec0; text-align:center; margin-top:2px;"></div>
                         <div id="compliance-summary" style="font-size:0.75rem; text-align:center; margin-top:4px;"></div>
+
+                        <div style="margin-top:12px; display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+                            <button class="action-btn" id="focus-all-btn" onclick="switchRecordingFocusMode('all')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">All Words</button>
+                            <button class="action-btn" id="focus-required-btn" onclick="switchRecordingFocusMode('required')" style="font-size:0.75rem; padding:5px 10px; background:#d69e2e;">① Phase 1: Required Only</button>
+                            <button class="action-btn" id="focus-remaining-btn" onclick="switchRecordingFocusMode('remaining')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">Phase 2: Remaining Variants</button>
+                        </div>
+                        <div style="font-size:0.68rem; color:#718096; text-align:center; margin-top:4px;">
+                            <strong>Phase 1</strong> = one take per word, plus every impact/game/countdown call — enough for a complete, exportable, functional pack (every word gets spoken; just not varied yet). <strong>Phase 2</strong> = the extra takes for words that repeat often, so the same word doesn't sound identical every time. Export always includes a Phase-2 fallback: any variant you haven't recorded yet reuses your Phase 1 take instead of going silent.
+                        </div>
+
+                        <div class="progress-container" style="height:14px; margin-top:10px;">
+                            <div class="progress-bar" id="phase1-progress" style="background:#d69e2e;"></div>
+                            <div class="progress-text" id="phase1-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 1: 0 / --</div>
+                        </div>
+                        <div class="progress-container" style="height:14px; margin-top:4px;">
+                            <div class="progress-bar" id="phase2-progress" style="background:#63b3ed;"></div>
+                            <div class="progress-text" id="phase2-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 2: 0 / --</div>
+                        </div>
                     </div>
+                </div>
                 </div>
                 <div class="matrix-container">
                     <div class="matrix-grid" id="token-matrix-mesh"></div>
@@ -469,7 +496,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         let codriverName = 'My Custom CoDriver';
         let activeProfileName = 'default';
 	let lang = 'en';
-	let currentVersion = "3.10.1";
+	let currentVersion = "3.13.1";
 	
 	
 	document.title = "Pacenote Recorder Studio - v" + currentVersion;
@@ -537,7 +564,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             logToConsole(`Comms Radio Simulation Matrix toggled: ${useDSPFilterEngine ? 'ACTIVE' : 'INACTIVE'}`);
         }
 
-        const ENGLISH_WORD_VARIANT_COUNTS = {"1000_":4,"1001_":4,"100_":4,"101_":4,"10_":4,"120_":4,"121_":4,"140_":4,"141_":4,"150_":4,"151_":4,"160_":4,"161_":4,"180_":4,"181_":4,"1_":4,"200_":4,"201_":4,"20_":4,"21_":4,"250_":4,"251_":4,"2_":4,"300_":4,"301_":4,"30_":4,"31_":4,"350_":4,"351_":4,"3_":4,"400_":4,"401_":4,"40_":4,"41_":4,"450_":4,"451_":4,"4_":4,"500_":4,"501_":4,"50_":4,"51_":4,"5_":4,"600_":4,"601_":4,"60_":4,"61_":4,"6_":4,"700_":4,"701_":4,"70_":4,"71_":4,"7_":4,"800_":4,"801_":4,"80_":4,"81_":4,"8_":4,"900_":4,"901_":4,"90_":4,"90_left":4,"90_left_plus":4,"90_plus_scale":3,"90_right":4,"90_right_plus":4,"90_scale":3,"91_":4,"9_":4,"_90_":3,"_90_plus":3,"_acute":3,"_five":3,"_five_plus":3,"_flat":3,"_four":3,"_four_plus":3,"_hp":3,"_hp_plus":3,"_max":3,"_one":3,"_one_plus":3,"_open_hp":3,"_six":3,"_six_plus":3,"_square":3,"_square_plus":3,"_three":3,"_three_plus":3,"_two":3,"_two_plus":3,"a_bit":2,"a_lot":2,"acute_left":4,"acute_right":4,"acute_scale":3,"after":2,"again":4,"and":4,"at":2,"at_bale":2,"at_banner":2,"at_barrel":2,"at_black":2,"at_blue":2,"at_bridge":2,"at_bush":2,"at_car":2,"at_crest":2,"at_entry":2,"at_exit":2,"at_fence":2,"at_flag":2,"at_gate":2,"at_green":2,"at_guardrail":2,"at_house":2,"at_junction":2,"at_log":2,"at_logs":2,"at_object":2,"at_opening":2,"at_post":2,"at_red":2,"at_rock":2,"at_sign":2,"at_tape":2,"at_thing":2,"at_tree":2,"at_trees":2,"at_wall":2,"at_white":2,"at_yellow":2,"bad":3,"bad_bump":2,"bad_bump_dip":2,"bad_bump_dips":2,"bad_bumps":2,"bad_camber":1,"bad_squash":2,"bad_sumppu":2,"badcamber":2,"bale":2,"bale_in":2,"bale_out":2,"bales":2,"barrel_in":2,"barrel_out":2,"barrels":2,"batterys_flat":1,"be_brave":2,"before":2,"behind":2,"better_grip":2,"between_bales":2,"between_barrels":2,"between_tires":2,"big":2,"big_dab":2,"big_jump":2,"big_squash":2,"big_sumppu":2,"black_ice":2,"blind":2,"bloodylong":3,"border":2,"boulder":2,"brake":3,"brake_10_":3,"brake_20_":3,"brake_30_":3,"brake_40_":3,"brake_50_":3,"brake_and":3,"brake_into":3,"bridge":2,"bridge_bump":2,"brow":2,"bump":2,"bump_dip":2,"bump_dips":2,"bumps":2,"bumps_over":2,"bumpy_braking":2,"bush":2,"busstop_chicane":4,"busstop_chicane_left":4,"busstop_chicane_right":4,"camber":2,"care":3,"care_in":2,"care_out":2,"caution":3,"caution_water":2,"cautioncaution":3,"cautioncautioncaution":3,"checkpoint":2,"chicane":4,"chicane_dive_left":4,"chicane_dive_right":4,"chicane_left_entry":4,"chicane_right_entry":4,"clip":2,"cobbles":2,"concrete":2,"continues_over_brow":2,"continues_over_crest":2,"continues_over_small_crest":2,"cramped":2,"crest":2,"crest_dab":2,"crest_to_left":2,"crest_to_right":2,"curb":2,"curbside":2,"curve":2,"cut":3,"cut_through":2,"dab":2,"dab_over_jump":2,"damp":2,"deceptive":2,"deep":2,"deep_rut":2,"deep_ruts":2,"dip":2,"directly":2,"dirt":2,"dirty":2,"ditch":2,"ditch_in":2,"ditch_out":2,"done":2,"dont":3,"dont_cut":3,"dont_cut_early":2,"dont_cut_late":2,"dont_early":2,"dont_late":2,"donut_left":4,"donut_right":4,"double":2,"double_caution":3,"double_crest":2,"double_dont":2,"double_dont_cut":2,"double_jump":2,"doubletightens":3,"down":2,"drain":2,"drain_in":2,"drain_out":2,"draws_in":2,"drop_in":2,"drop_out":2,"drops":2,"drops_left":2,"drops_right":2,"dry":2,"early":3,"early_cut":2,"easy":3,"edge":2,"exact":2,"exit_lap":4,"fast":3,"fence":2,"fence_in":2,"fence_out":2,"fickle":2,"finish":4,"first_exit":2,"five_bales":2,"five_left":4,"five_left_plus":4,"five_parts":2,"five_plus_scale":3,"five_right":4,"five_right_plus":4,"five_scale":3,"flat":3,"flat_crest":2,"flat_jump":2,"flat_left":4,"flat_right":4,"flat_scale":3,"for":2,"fork_left":4,"fork_right":4,"four_bales":2,"four_left":4,"four_left_plus":4,"four_parts":2,"four_plus_scale":3,"four_right":4,"four_right_plus":4,"four_scale":3,"from":2,"from_left":2,"from_right":2,"fuckinglong":3,"full_cut":2,"gate":2,"gearbox_broke":1,"gets_faster":2,"gets_rougher":2,"gets_slower":2,"gets_smoother":2,"go":3,"go_narrow":2,"go_round":2,"go_straight":2,"go_wide":2,"good":2,"gravel":2,"grid":2,"grip":2,"grip_in":2,"grip_middle":2,"grip_out":2,"grit":2,"guardrail":2,"guardrail_in":2,"guardrail_out":2,"guardrails":2,"halflong":3,"handbrake":2,"hang":2,"hard":3,"hole":2,"hollow":2,"hook":2,"house":2,"house_in":2,"house_out":2,"hp_left":4,"hp_left_plus":4,"hp_plus_scale":3,"hp_right":4,"hp_right_plus":4,"hp_scale":3,"hug":2,"ice":2,"icy":2,"immediate":4,"important":2,"in":2,"in_and_out":2,"into":4,"island":2,"jump":2,"jump_dab":2,"jump_maybe":2,"junction":3,"junction_left":4,"junction_right":4,"keep_in":2,"keep_left":2,"keep_middle":2,"keep_out":2,"keep_right":2,"late":3,"late_cut":2,"lateish":2,"layby":2,"left":4,"left_around":4,"left_entry":2,"left_into":4,"left_over":4,"left_right":4,"leftish":2,"lift":2,"lifts":2,"light":2,"line":3,"log":2,"log_in":2,"log_out":2,"logs":2,"logs_in":2,"logs_out":2,"long":3,"long_crest":2,"long_rut":2,"long_ruts":2,"longlong":3,"loose_gravel":2,"lump":2,"many":2,"marshalls":2,"mast":2,"max_left":4,"max_right":4,"max_scale":3,"maybe":3,"maybe_slippy":2,"minus":2,"minusminus":2,"much":2,"muddy":2,"narrow":2,"narrow_bridge":2,"narrow_gate":2,"narrows":3,"near":2,"neat":2,"negative":2,"netting":2,"nips":2,"off":2,"on":2,"one_left":4,"one_left_plus":4,"one_plus_scale":3,"one_right":4,"one_right_plus":4,"one_scale":3,"onto":4,"onto_big_road":2,"onto_bridge":2,"onto_cobbles":2,"onto_concrete":2,"onto_field":2,"onto_finish":4,"onto_grass":2,"onto_gravel":2,"onto_grit":2,"onto_ice":2,"onto_narrow_bridge":2,"onto_narrower":2,"onto_nextlap":4,"onto_slush":2,"onto_small_road":2,"onto_snow":2,"onto_straight":2,"onto_tarmac":2,"onto_wider":2,"open_hp_left":4,"open_hp_right":4,"open_hp_scale":3,"opens":2,"opens_90_":3,"opens_90_plus":3,"opens_abit":2,"opens_at_junction":2,"opens_bloodylong":2,"opens_early":2,"opens_five":3,"opens_five_plus":3,"opens_flat":3,"opens_four":3,"opens_four_plus":3,"opens_fuckinglong":2,"opens_halflong":2,"opens_hp":3,"opens_hp_plus":3,"opens_late":2,"opens_long":2,"opens_longlong":2,"opens_max":3,"opens_one":3,"opens_one_plus":3,"opens_open_hp":3,"opens_overcrest":2,"opens_round":2,"opens_sharp":2,"opens_six":3,"opens_six_plus":3,"opens_square":3,"opens_square_plus":3,"opens_three":3,"opens_three_plus":3,"opens_tightens":2,"opens_two":3,"opens_two_plus":3,"opens_verylong":2,"opens_veryverylong":2,"out":2,"over":2,"over_big_jump":2,"over_bridge":2,"over_brow":2,"over_crest":2,"over_early_and_late_crest":2,"over_early_crest":2,"over_jump":2,"over_jump_dab":2,"over_jump_maybe":2,"over_late_crest":2,"over_long_crest":2,"over_narrow_bridge":2,"over_rails":2,"over_rocks":2,"over_small_crest":2,"over_small_jump":2,"over_three_crests":2,"over_two_crests":2,"past_junction":2,"path":2,"patient":2,"plus":2,"plusplus":2,"positive":2,"post":2,"post_early":2,"post_in":2,"post_late":2,"post_out":2,"posts":2,"precise":2,"problem_engine":1,"puddle":2,"rails":2,"remember":2,"right":4,"right_around":4,"right_entry":2,"right_into":4,"right_left":4,"right_over":4,"rightish":2,"road":2,"rock":2,"rocks":2,"rocks_in":2,"rocks_out":2,"rotate":3,"round":3,"roundabout":2,"rubble":2,"rut":2,"ruts":2,"scale_minus":2,"scale_plus":2,"second_exit":2,"see":2,"sharp":3,"shit":2,"short":3,"short_left":4,"short_right":4,"shortshort":3,"shoulder":2,"sidewalk":2,"sign":2,"sign_in":2,"sign_out":2,"six_left":4,"six_left_plus":4,"six_plus_scale":3,"six_right":4,"six_right_plus":4,"six_scale":3,"slide":2,"slight":2,"slight_tightens":2,"slippy":2,"slippy_braking":2,"slippy_entry":2,"slippy_exit":2,"slow":3,"slow_crest":2,"slowing":3,"slush":2,"small":2,"small_crest":2,"small_cut":2,"small_dab":2,"small_jump":2,"small_squash":2,"small_sumppu":2,"snow":2,"snow_border":2,"spectators":2,"speed":2,"speedbump":2,"split":2,"split_time":2,"square_left":4,"square_left_plus":4,"square_plus_scale":3,"square_right":4,"square_right_plus":4,"square_scale":3,"squash":2,"stay_in_rut":2,"stay_out":2,"stay_out_of_rut":2,"steep_drop":2,"steep_hill":2,"steep_incline":2,"steep_slope":2,"steering_broke":1,"stone":2,"stone_in":2,"stone_out":2,"stop":2,"straight":2,"stump":2,"sudden":4,"sumppu":2,"surface":2,"surface_change":2,"sus_broke":1,"take":2,"take_speed":2,"tape":2,"tarmac":2,"then":2,"third_exit":2,"three_bales":2,"three_left":4,"three_left_plus":4,"three_parts":2,"three_plus_scale":3,"three_right":4,"three_right_plus":4,"three_scale":3,"three_times_dont":2,"three_times_dontcut":2,"through":2,"through_gate":2,"through_narrow_gate":2,"throws":2,"tight":2,"tightens":3,"tightens_90_":3,"tightens_90_plus":3,"tightens_abit":2,"tightens_acute":3,"tightens_at_junction":2,"tightens_bad_squash":2,"tightens_bad_sumppu":2,"tightens_big_squash":2,"tightens_big_sumppu":2,"tightens_bloodylong":2,"tightens_early":2,"tightens_five":3,"tightens_five_plus":3,"tightens_four":3,"tightens_four_plus":3,"tightens_fuckinglong":2,"tightens_halflong":2,"tightens_hp":3,"tightens_hp_plus":3,"tightens_late":2,"tightens_long":2,"tightens_longlong":2,"tightens_one":3,"tightens_one_plus":3,"tightens_open_hp":3,"tightens_opens":2,"tightens_overcrest":2,"tightens_round":2,"tightens_sharp":2,"tightens_six":3,"tightens_six_plus":3,"tightens_small_squash":2,"tightens_small_sumppu":2,"tightens_square":3,"tightens_square_plus":3,"tightens_squash":2,"tightens_sumppu":2,"tightens_three":3,"tightens_three_plus":3,"tightens_two":3,"tightens_two_plus":3,"tightens_verylong":2,"tightens_veryverylong":2,"tires":2,"tires_in":2,"tires_out":2,"to_bump":2,"to_crest":2,"to_dip":2,"to_jump":2,"to_sight_distance":2,"tofinish":4,"tree":2,"tree_in":2,"tree_out":2,"trees":2,"triple_caution":3,"triple_dont":2,"triple_dont_cut":2,"trust":2,"tunnel":2,"turn":3,"twisty":2,"twisty_from_left":2,"twisty_from_right":2,"two_bales":2,"two_left":4,"two_left_plus":4,"two_parts":2,"two_plus_scale":3,"two_right":4,"two_right_plus":4,"two_scale":3,"two_times_dont":2,"two_times_dontcut":2,"understeer":2,"unseen":2,"until":2,"up":2,"very":2,"very_short":3,"very_slippy":2,"verylong":3,"veryverylong":3,"walk":4,"wall":2,"wall_in":2,"wall_out":2,"walls":2,"watch":2,"water":2,"water_temp":1,"well_done":4,"wet":2,"weve_got_fire":1,"wide":2,"widens":2,"wideout":3,"wooden_fence":2,"worse_grip":2,"wv_lost_brakes":1};
+        const ENGLISH_WORD_VARIANT_COUNTS = {"1000_":4,"1001_":4,"100_":4,"101_":4,"10_":4,"120_":4,"121_":4,"140_":4,"141_":4,"150_":4,"151_":4,"160_":4,"161_":4,"180_":4,"181_":4,"1_":4,"200_":4,"201_":4,"20_":4,"21_":4,"250_":4,"251_":4,"2_":4,"300_":4,"301_":4,"30_":4,"31_":4,"350_":4,"351_":4,"3_":4,"400_":4,"401_":4,"40_":4,"41_":4,"450_":4,"451_":4,"4_":4,"500_":4,"501_":4,"50_":4,"51_":4,"5_":4,"600_":4,"601_":4,"60_":4,"61_":4,"6_":4,"700_":4,"701_":4,"70_":4,"71_":4,"7_":4,"800_":4,"801_":4,"80_":4,"81_":4,"8_":4,"900_":4,"901_":4,"90_":4,"90_left":4,"90_left_plus":4,"90_plus_scale":3,"90_right":4,"90_right_plus":4,"90_scale":3,"91_":4,"9_":4,"_90_":3,"_90_plus":3,"_acute":3,"_five":3,"_five_plus":3,"_flat":3,"_four":3,"_four_plus":3,"_hp":3,"_hp_plus":3,"_max":3,"_one":3,"_one_plus":3,"_open_hp":3,"_six":3,"_six_plus":3,"_square":3,"_square_plus":3,"_three":3,"_three_plus":3,"_two":3,"_two_plus":3,"a_bit":2,"a_lot":2,"acute_left":4,"acute_right":4,"acute_scale":3,"after":2,"again":4,"and":4,"at":2,"at_bale":2,"at_banner":2,"at_barrel":2,"at_black":2,"at_blue":2,"at_bridge":2,"at_bush":2,"at_car":2,"at_crest":2,"at_entry":2,"at_exit":2,"at_fence":2,"at_flag":2,"at_gate":2,"at_green":2,"at_guardrail":2,"at_house":2,"at_junction":2,"at_log":2,"at_logs":2,"at_object":2,"at_opening":2,"at_post":2,"at_red":2,"at_rock":2,"at_sign":2,"at_tape":2,"at_thing":2,"at_tree":2,"at_trees":2,"at_wall":2,"at_white":2,"at_yellow":2,"bad":3,"bad_bump":2,"bad_bump_dip":2,"bad_bump_dips":2,"bad_bumps":2,"bad_camber":1,"bad_squash":2,"bad_sumppu":2,"badcamber":2,"bale":2,"bale_in":2,"bale_out":2,"bales":2,"barrel_in":2,"barrel_out":2,"barrels":2,"batterys_flat":1,"be_brave":2,"before":2,"behind":2,"better_grip":2,"between_bales":2,"between_barrels":2,"between_tires":2,"big":2,"big_dab":2,"big_jump":2,"big_squash":2,"big_sumppu":2,"black_ice":2,"blind":2,"bloodylong":3,"border":2,"boulder":2,"brake":3,"brake_10_":3,"brake_20_":3,"brake_30_":3,"brake_40_":3,"brake_50_":3,"brake_and":3,"brake_into":3,"bridge":2,"bridge_bump":2,"brow":2,"bump":2,"bump_dip":2,"bump_dips":2,"bumps":2,"bumps_over":2,"bumpy_braking":2,"bush":2,"busstop_chicane":4,"busstop_chicane_left":4,"busstop_chicane_right":4,"camber":2,"care":3,"care_in":2,"care_out":2,"caution":3,"caution_water":2,"cautioncaution":3,"cautioncautioncaution":3,"checkpoint":2,"chicane":4,"chicane_dive_left":4,"chicane_dive_right":4,"chicane_left_entry":4,"chicane_right_entry":4,"clip":2,"cobbles":2,"concrete":2,"continues_over_brow":2,"continues_over_crest":2,"continues_over_small_crest":2,"cramped":2,"crest":2,"crest_dab":2,"crest_to_left":2,"crest_to_right":2,"curb":2,"curbside":2,"curve":2,"cut":3,"cut_through":2,"dab":2,"dab_over_jump":2,"damp":2,"deceptive":2,"deep":2,"deep_rut":2,"deep_ruts":2,"dip":2,"directly":2,"dirt":2,"dirty":2,"ditch":2,"ditch_in":2,"ditch_out":2,"done":2,"dont":3,"dont_cut":3,"dont_cut_early":2,"dont_cut_late":2,"dont_early":2,"dont_late":2,"donut_left":4,"donut_right":4,"double":2,"double_caution":3,"double_crest":2,"double_dont":2,"double_dont_cut":2,"double_jump":2,"doubletightens":3,"down":2,"drain":2,"drain_in":2,"drain_out":2,"draws_in":2,"drop_in":2,"drop_out":2,"drops":2,"drops_left":2,"drops_right":2,"dry":2,"early":3,"early_cut":2,"easy":3,"edge":2,"exact":2,"exit_lap":4,"fast":3,"fence":2,"fence_in":2,"fence_out":2,"fickle":2,"finish":4,"first_exit":2,"five_bales":2,"five_left":4,"five_left_plus":4,"five_parts":2,"five_plus_scale":3,"five_right":4,"five_right_plus":4,"five_scale":3,"flat":3,"flat_crest":2,"flat_jump":2,"flat_left":4,"flat_right":4,"flat_scale":3,"for":2,"fork_left":4,"fork_right":4,"four_bales":2,"four_left":4,"four_left_plus":4,"four_parts":2,"four_plus_scale":3,"four_right":4,"four_right_plus":4,"four_scale":3,"from":2,"from_left":2,"from_right":2,"fuckinglong":3,"full_cut":2,"gate":2,"gearbox_broke":1,"gets_faster":2,"gets_rougher":2,"gets_slower":2,"gets_smoother":2,"go":3,"go_narrow":2,"go_round":2,"go_straight":2,"go_wide":2,"good":2,"gravel":2,"grid":2,"grip":2,"grip_in":2,"grip_middle":2,"grip_out":2,"grit":2,"guardrail":2,"guardrail_in":2,"guardrail_out":2,"guardrails":2,"halflong":3,"handbrake":2,"hang":2,"hard":3,"hole":2,"hollow":2,"hook":2,"house":2,"house_in":2,"house_out":2,"hp_left":4,"hp_left_plus":4,"hp_plus_scale":3,"hp_right":4,"hp_right_plus":4,"hp_scale":3,"hug":2,"ice":2,"icy":2,"immediate":4,"important":2,"in":2,"in_and_out":2,"into":4,"island":2,"jump":2,"jump_dab":2,"jump_maybe":2,"junction":3,"junction_left":4,"junction_right":4,"keep_in":2,"keep_left":2,"keep_middle":2,"keep_out":2,"keep_right":2,"late":3,"late_cut":2,"lateish":2,"layby":2,"left":4,"left_around":4,"left_entry":2,"left_into":4,"left_over":4,"left_right":4,"leftish":2,"lift":2,"lifts":2,"light":2,"line":3,"log":2,"log_in":2,"log_out":2,"logs":2,"logs_in":2,"logs_out":2,"long":3,"long_crest":2,"long_rut":2,"long_ruts":2,"longlong":3,"loose_gravel":2,"lump":2,"many":2,"marshalls":2,"mast":2,"max_left":4,"max_right":4,"max_scale":3,"maybe":3,"maybe_slippy":2,"minus":2,"minusminus":2,"much":2,"muddy":2,"narrow":2,"narrow_bridge":2,"narrow_gate":2,"narrows":3,"near":2,"neat":2,"negative":2,"netting":2,"nips":2,"off":2,"on":2,"one_left":4,"one_left_plus":4,"one_plus_scale":3,"one_right":4,"one_right_plus":4,"one_scale":3,"onto":4,"onto_big_road":2,"onto_bridge":2,"onto_cobbles":2,"onto_concrete":2,"onto_field":2,"onto_finish":4,"onto_grass":2,"onto_gravel":2,"onto_grit":2,"onto_ice":2,"onto_narrow_bridge":2,"onto_narrower":2,"onto_nextlap":4,"onto_slush":2,"onto_small_road":2,"onto_snow":2,"onto_straight":2,"onto_tarmac":2,"onto_wider":2,"open_hp_left":4,"open_hp_right":4,"open_hp_scale":3,"opens":2,"opens_90_":3,"opens_90_plus":3,"opens_abit":2,"opens_at_junction":2,"opens_bloodylong":2,"opens_early":2,"opens_five":3,"opens_five_plus":3,"opens_flat":3,"opens_four":3,"opens_four_plus":3,"opens_fuckinglong":2,"opens_halflong":2,"opens_hp":3,"opens_hp_plus":3,"opens_late":2,"opens_long":2,"opens_longlong":2,"opens_max":3,"opens_one":3,"opens_one_plus":3,"opens_open_hp":3,"opens_overcrest":2,"opens_round":2,"opens_sharp":2,"opens_six":3,"opens_six_plus":3,"opens_square":3,"opens_square_plus":3,"opens_three":3,"opens_three_plus":3,"opens_tightens":2,"opens_two":3,"opens_two_plus":3,"opens_verylong":2,"opens_veryverylong":2,"out":2,"over":2,"over_big_jump":2,"over_bridge":2,"over_brow":2,"over_crest":2,"over_early_and_late_crest":2,"over_early_crest":2,"over_jump":2,"over_jump_dab":2,"over_jump_maybe":2,"over_late_crest":2,"over_long_crest":2,"over_narrow_bridge":2,"over_rails":2,"over_rocks":2,"over_small_crest":2,"over_small_jump":2,"over_three_crests":2,"over_two_crests":2,"past_junction":2,"path":2,"patient":2,"plus":2,"plusplus":2,"positive":2,"post":2,"post_early":2,"post_in":2,"post_late":2,"post_out":2,"posts":2,"precise":2,"problem_engine":1,"puddle":2,"rails":2,"remember":2,"right":4,"right_around":4,"right_entry":2,"right_into":4,"right_left":4,"right_over":4,"rightish":2,"road":2,"rock":2,"rocks":2,"rocks_in":2,"rocks_out":2,"rotate":3,"round":3,"roundabout":2,"rubble":2,"rut":2,"ruts":2,"scale_minus":2,"scale_plus":2,"second_exit":2,"see":2,"sharp":3,"shit":2,"short":3,"short_left":4,"short_right":4,"shortshort":3,"shoulder":2,"sidewalk":2,"sign":2,"sign_in":2,"sign_out":2,"six_left":4,"six_left_plus":4,"six_plus_scale":3,"six_right":4,"six_right_plus":4,"six_scale":3,"slide":2,"slight":2,"slight_tightens":2,"slippy":2,"slippy_braking":2,"slippy_entry":2,"slippy_exit":2,"slow":3,"slow_crest":2,"slowing":3,"slush":2,"small":2,"small_crest":2,"small_cut":2,"small_dab":2,"small_jump":2,"small_squash":2,"small_sumppu":2,"snow":2,"snow_border":2,"spectators":2,"speed":2,"speedbump":2,"split":2,"split_time":2,"square_left":4,"square_left_plus":4,"square_plus_scale":3,"square_right":4,"square_right_plus":4,"square_scale":3,"squash":2,"stay_in_rut":2,"stay_out":2,"stay_out_of_rut":2,"steep_drop":2,"steep_hill":2,"steep_incline":2,"steep_slope":2,"steering_broke":1,"stone":2,"stone_in":2,"stone_out":2,"stop":2,"straight":2,"stump":2,"sudden":4,"sumppu":2,"surface":2,"surface_change":2,"sus_broke":1,"take":2,"take_speed":2,"tape":2,"tarmac":2,"then":2,"third_exit":2,"three_bales":2,"three_left":4,"three_left_plus":4,"three_parts":2,"three_plus_scale":3,"three_right":4,"three_right_plus":4,"three_scale":3,"three_times_dont":2,"three_times_dontcut":2,"through":2,"through_gate":2,"through_narrow_gate":2,"throws":2,"tight":2,"tightens":3,"tightens_90_":3,"tightens_90_plus":3,"tightens_abit":2,"tightens_acute":3,"tightens_at_junction":2,"tightens_bad_squash":2,"tightens_bad_sumppu":2,"tightens_big_squash":2,"tightens_big_sumppu":2,"tightens_bloodylong":2,"tightens_early":2,"tightens_five":3,"tightens_five_plus":3,"tightens_four":3,"tightens_four_plus":3,"tightens_fuckinglong":2,"tightens_halflong":2,"tightens_hp":3,"tightens_hp_plus":3,"tightens_late":2,"tightens_long":2,"tightens_longlong":2,"tightens_one":3,"tightens_one_plus":3,"tightens_open_hp":3,"tightens_opens":2,"tightens_overcrest":2,"tightens_round":2,"tightens_sharp":2,"tightens_six":3,"tightens_six_plus":3,"tightens_small_squash":2,"tightens_small_sumppu":2,"tightens_square":3,"tightens_square_plus":3,"tightens_squash":2,"tightens_sumppu":2,"tightens_three":3,"tightens_three_plus":3,"tightens_two":3,"tightens_two_plus":3,"tightens_verylong":2,"tightens_veryverylong":2,"tires":2,"tires_in":2,"tires_out":2,"to_bump":2,"to_crest":2,"to_dip":2,"to_jump":2,"to_sight_distance":2,"tofinish":4,"tree":2,"tree_in":2,"tree_out":2,"trees":2,"triple_caution":3,"triple_dont":2,"triple_dont_cut":2,"trust":2,"tunnel":2,"turn":3,"twisty":2,"twisty_from_left":2,"twisty_from_right":2,"two_bales":2,"two_left":4,"two_left_plus":4,"two_parts":2,"two_plus_scale":3,"two_right":4,"two_right_plus":4,"two_scale":3,"two_times_dont":2,"two_times_dontcut":2,"understeer":2,"unseen":2,"until":2,"up":2,"very":2,"very_short":3,"very_slippy":2,"verylong":3,"veryverylong":3,"walk":4,"wall":2,"wall_in":2,"wall_out":2,"walls":2,"watch":2,"water":2,"water_temp":1,"well_done":4,"wet":2,"weve_got_fire":1,"wide":2,"widens":2,"wideout":3,"wooden_fence":2,"worse_grip":2,"wv_lost_brakes":1,"dos":2,"WC":2,"dont_block":2,"brake_jatkuu":3,"jatkuu":4,"loiva_alku":3,"turns":2,"left_round_hp":4,"right_round_hp":4,"round_hp_scale":3,"tightens_round_hp":3,"_round_hp":3};
 
         const SILENCE_FILENAME = 'silence650.ogg';
 
@@ -581,7 +608,15 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             water_temp: "Water temperature warning",
             weve_got_fire: "We've got a fire!",
             wv_lost_brakes: "We've lost the brakes!",
-            dont_cut: "Don't Cut"
+            dont_cut: "Don't Cut",
+            // Content-gap fill (real grammar entries English never had a word for —
+            // verified against the real archive, not guessed; filenames match exactly):
+            dos: "Camber",
+            WC: "Bad Camber",
+            dont_block: "Don't Block",
+            brake_jatkuu: "Brake Continues",
+            jatkuu: "Continues",
+            loiva_alku: "Gentle Start"
         };
 
         // ---------------------------------------------------------------
@@ -599,11 +634,35 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         let displayOverrides = ENGLISH_DISPLAY_OVERRIDES;
 
         let completeSoundManifest = [];
+        let fileKeyVariantInfo = {}; // fileKey -> {base, variant} for main word-bank tokens only
+        // ---------------------------------------------------------------
+        // TWO-PHASE RECORDING WORKFLOW: Phase 1 (variant 1 of every word,
+        // plus all impact/game/broken/number calls) is enough for a fully
+        // functional, exportable pack — every word gets spoken, just
+        // without variety yet. Phase 2 (variants 2+) adds that variety.
+        // isCoreToken() is the single source of truth for what counts as
+        // "Phase 1" — used by script generation, the matrix grid, progress
+        // metrics, and the export fallback chain, so they can never
+        // disagree with each other about which token is which phase.
+        // ---------------------------------------------------------------
+        let recordingFocusMode = 'all'; // 'all' | 'required' | 'remaining'
+
+        function isCoreToken(fileKey) {
+            const info = fileKeyVariantInfo[fileKey];
+            if (!info) return true; // impact/game/broken/number — small, fixed set, always Phase 1
+            return info.variant === 1;
+        }
+
         function rebuildCompleteSoundManifest() {
             completeSoundManifest = [];
+            fileKeyVariantInfo = {};
             Object.keys(pacenoteWordVariantCounts).forEach(base => {
                 const count = pacenoteWordVariantCounts[base];
-                for (let v = 1; v <= count; v++) { completeSoundManifest.push(`${base}${v}`); }
+                for (let v = 1; v <= count; v++) {
+                    const key = `${base}${v}`;
+                    completeSoundManifest.push(key);
+                    fileKeyVariantInfo[key] = { base, variant: v };
+                }
             });
             impactSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
             gameSpeechFiles.forEach(entry => completeSoundManifest.push(entry.file));
@@ -958,8 +1017,17 @@ const TARGET_SCRIPT_LENGTH = 20;
             const remainingCounts = {};
             const nextVariantNumbers = {};
             Object.keys(pacenoteWordVariantCounts).forEach(base => {
-                remainingCounts[base] = pacenoteWordVariantCounts[base];
-                nextVariantNumbers[base] = 1;
+                const fullCount = pacenoteWordVariantCounts[base];
+                if (recordingFocusMode === 'required') {
+                    remainingCounts[base] = Math.min(fullCount, 1);
+                    nextVariantNumbers[base] = 1;
+                } else if (recordingFocusMode === 'remaining') {
+                    remainingCounts[base] = Math.max(fullCount - 1, 0);
+                    nextVariantNumbers[base] = 2;
+                } else {
+                    remainingCounts[base] = fullCount;
+                    nextVariantNumbers[base] = 1;
+                }
             });
 
             const connectorPool = pools.CONNECTOR;
@@ -1049,6 +1117,7 @@ const TARGET_SCRIPT_LENGTH = 20;
 
         function generateSpecialCallScripts() {
             const scripts = [];
+            if (recordingFocusMode === 'remaining') return scripts; // impact/game/number are always Phase 1 (core) — nothing "remaining" here
             impactSpeechFiles.forEach(entry => {
                 scripts.push({
                     tokens: [entry.file],
@@ -1378,6 +1447,10 @@ const TARGET_SCRIPT_LENGTH = 20;
             const impactFileSet = new Set(impactSpeechFiles.map(e => e.file));
             const miscFileSet = new Set([...gameSpeechFiles, ...numberSpeechFiles].map(e => e.file));
             completeSoundManifest.forEach(fileKey => {
+                const isCore = isCoreToken(fileKey);
+                if (recordingFocusMode === 'required' && !isCore) return;
+                if (recordingFocusMode === 'remaining' && isCore) return;
+
                 const div = document.createElement('div');
                 div.id = `matrix-cell-${fileKey}`;
                 div.className = 'matrix-item';
@@ -1385,6 +1458,7 @@ const TARGET_SCRIPT_LENGTH = 20;
                 else if (miscFileSet.has(fileKey)) { div.classList.add('matrix-item-bonusword'); }
                 if (capturedAudioBuffers[fileKey]) div.classList.add('recorded');
                 if (activeTargetFileKey === fileKey && currentWorkflowMode === 'target') div.classList.add('active-target');
+                if (isCore) div.classList.add('phase1-core');
 
                 const quality = audioQualityFlags[fileKey];
                 let label = fileKey.includes('.') ? fileKey : `${fileKey}.ogg`;
@@ -1393,12 +1467,30 @@ const TARGET_SCRIPT_LENGTH = 20;
                     const badge = quality.silent ? '🔇' : '⚠️';
                     label = `${badge} ${label}`;
                 }
-                div.innerText = label;
+                div.innerText = (isCore ? '① ' : '') + label;
 
                 div.onclick = () => { if(currentWorkflowMode === 'target') selectActiveTargetToken(fileKey); };
                 attachWordUsageHover(div, fileKey);
                 container.appendChild(div);
             });
+        }
+
+        function switchRecordingFocusMode(mode) {
+            if (mode === recordingFocusMode) return;
+            recordingFocusMode = mode;
+            const btnIds = { all: 'focus-all-btn', required: 'focus-required-btn', remaining: 'focus-remaining-btn' };
+            const activeColors = { all: '#4a5568', required: '#d69e2e', remaining: '#63b3ed' };
+            Object.keys(btnIds).forEach(m => {
+                const btn = document.getElementById(btnIds[m]);
+                if (btn) btn.style.background = (m === mode) ? activeColors[m] : '#2d3748';
+            });
+            rebuildConcatenativeScripts();
+            currentScriptIndex = 0;
+            renderTokenMatrixGrid();
+            updateMasterProgressMetrics();
+            if (currentWorkflowMode === 'script') loadScriptIndex(0);
+            const modeLabels = { all: 'All Words', required: 'Phase 1 — Required Only', remaining: 'Phase 2 — Remaining Variants' };
+            logToConsole(`Recording focus switched to: ${modeLabels[mode]}.`);
         }
 
         function switchWorkflowMode(mode) {
@@ -2131,13 +2223,33 @@ const TARGET_SCRIPT_LENGTH = 20;
             if (masterProg) masterProg.style.width = `${pct}%`;
             
             const masterProgText = document.getElementById('master-progress-text');
-            if (masterProgText) masterProgText.innerText = `${requiredCount} / ${completeSoundManifest.length} Required Files Captured (${pct}%)`;
+            if (masterProgText) masterProgText.innerText = `${requiredCount} / ${completeSoundManifest.length} Total Files Captured (${pct}%)`;
+
+            const coreKeys = completeSoundManifest.filter(k => isCoreToken(k));
+            const coreDone = coreKeys.filter(k => !!capturedAudioBuffers[k]).length;
+            const corePct = coreKeys.length > 0 ? ((coreDone / coreKeys.length) * 100).toFixed(1) : '0.0';
+            const remainingKeys = completeSoundManifest.filter(k => !isCoreToken(k));
+            const remainingDone = remainingKeys.filter(k => !!capturedAudioBuffers[k]).length;
+            const remainingPct = remainingKeys.length > 0 ? ((remainingDone / remainingKeys.length) * 100).toFixed(1) : '0.0';
+
+            const phase1Prog = document.getElementById('phase1-progress');
+            if (phase1Prog) phase1Prog.style.width = `${corePct}%`;
+            const phase1Text = document.getElementById('phase1-progress-text');
+            if (phase1Text) {
+                phase1Text.innerText = coreDone >= coreKeys.length
+                    ? `Phase 1 complete: ${coreDone} / ${coreKeys.length} — pack is fully functional, every word is spoken.`
+                    : `Phase 1 (Required): ${coreDone} / ${coreKeys.length} (${corePct}%) — record this first for a functional, exportable pack.`;
+            }
+            const phase2Prog = document.getElementById('phase2-progress');
+            if (phase2Prog) phase2Prog.style.width = `${remainingPct}%`;
+            const phase2Text = document.getElementById('phase2-progress-text');
+            if (phase2Text) phase2Text.innerText = `Phase 2 (Variety): ${remainingDone} / ${remainingKeys.length} (${remainingPct}%) — extra takes for words that repeat often, optional polish.`;
 
             const bonusLabel = document.getElementById('bonus-progress-text');
             if (bonusLabel) {
                 const impactCount = impactSpeechFiles.filter(e => !!capturedAudioBuffers[e.file]).length;
                 const miscCount = [...gameSpeechFiles, ...numberSpeechFiles].filter(e => !!capturedAudioBuffers[e.file]).length;
-                bonusLabel.innerText = `Includes ${impactCount}/${impactSpeechFiles.length} Impact + ${miscCount}/${gameSpeechFiles.length + numberSpeechFiles.length} Start/Go — all required`;
+                bonusLabel.innerText = `Includes ${impactCount}/${impactSpeechFiles.length} Impact + ${miscCount}/${gameSpeechFiles.length + numberSpeechFiles.length} Start/Go — all Phase 1`;
             }
 
             const complianceEl = document.getElementById('compliance-summary');
@@ -2145,10 +2257,12 @@ const TARGET_SCRIPT_LENGTH = 20;
                 const missingCount = completeSoundManifest.length - requiredCount;
                 const flagged = getQualityFlaggedKeys();
                 const parts = [];
-                if (missingCount > 0) {
-                    parts.push(`<span style="color:#f56565;">⛔ ${missingCount} missing</span>`);
+                if (coreDone < coreKeys.length) {
+                    parts.push(`<span style="color:#f56565;">⛔ ${coreKeys.length - coreDone} Phase 1 file(s) still needed for a functional pack</span>`);
+                } else if (missingCount > 0) {
+                    parts.push(`<span style="color:#68d391;">✓ Phase 1 complete — pack is functional</span> &nbsp;·&nbsp; <span style="color:#ecc94b;">${missingCount} Phase 2 variant(s) remaining (optional)</span>`);
                 } else {
-                    parts.push(`<span style="color:#68d391;">✓ all required files captured</span>`);
+                    parts.push(`<span style="color:#68d391;">✓ all files captured — Phase 1 and Phase 2 complete</span>`);
                 }
                 if (flagged.length > 0) {
                     parts.push(`<span style="color:#ed8936;">⚠️ ${flagged.length} quality warning${flagged.length === 1 ? '' : 's'}</span>`);
@@ -2205,15 +2319,28 @@ const TARGET_SCRIPT_LENGTH = 20;
 
         function logCompliancePreExportReport() {
             const missingKeys = completeSoundManifest.filter(k => !capturedAudioBuffers[k]);
+            const missingCore = missingKeys.filter(k => isCoreToken(k));
+            const missingVariety = missingKeys.filter(k => {
+                if (isCoreToken(k)) return false;
+                const info = fileKeyVariantInfo[k];
+                return !(info && capturedAudioBuffers[`${info.base}1`]); // has no Phase 1 take to fall back to either
+            });
+            const coveredByFallback = missingKeys.length - missingCore.length - missingVariety.length;
             const flaggedKeys = getQualityFlaggedKeys();
 
             logToConsole(`--- Pre-export compliance report ---`);
-            if (missingKeys.length === 0) {
-                logToConsole(`✓ All ${completeSoundManifest.length} required files are captured.`);
+            if (missingCore.length === 0) {
+                logToConsole(`✓ Phase 1 complete — all ${completeSoundManifest.filter(k => isCoreToken(k)).length} required files are captured. Pack is functional.`);
             } else {
-                logToConsole(`⛔ ${missingKeys.length} required file(s) still missing (will be padded with silence):`);
-                const preview = missingKeys.slice(0, 15).map(k => k.includes('.') ? k : `${k}.ogg`).join(', ');
-                logToConsole(`   ${preview}${missingKeys.length > 15 ? ` … and ${missingKeys.length - 15} more` : ''}`);
+                logToConsole(`⛔ ${missingCore.length} Phase 1 (required) file(s) still missing — these WILL be silent in-game:`);
+                const preview = missingCore.slice(0, 15).map(k => k.includes('.') ? k : `${k}.ogg`).join(', ');
+                logToConsole(`   ${preview}${missingCore.length > 15 ? ` … and ${missingCore.length - 15} more` : ''}`);
+            }
+            if (coveredByFallback > 0) {
+                logToConsole(`ℹ️ ${coveredByFallback} Phase 2 (variety) file(s) not yet recorded — will reuse each word's Phase 1 take instead of silence, still fully audible in-game.`);
+            }
+            if (missingVariety.length > 0) {
+                logToConsole(`⚠️ ${missingVariety.length} Phase 2 file(s) have no Phase 1 take to fall back to either (will be silent) — record variant 1 for these words first.`);
             }
             if (flaggedKeys.length === 0) {
                 logToConsole(`✓ No quality warnings on recorded files.`);
@@ -10546,12 +10673,38 @@ TOACUTE=Acute
 LOIVA_ALKU=Loiva Alku
 `;
 
+        function showExportProgress() {
+            const container = document.getElementById('export-progress-container');
+            if (container) container.style.display = 'block';
+            updateExportProgress(0, 1, 'Preparing export…');
+        }
+
+        function updateExportProgress(done, total, label) {
+            const bar = document.getElementById('export-progress-bar');
+            const text = document.getElementById('export-progress-text');
+            const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+            if (bar) bar.style.width = `${pct}%`;
+            if (text) text.innerText = label || `${done} / ${total} files (${pct.toFixed(0)}%)`;
+        }
+
+        function hideExportProgress() {
+            const container = document.getElementById('export-progress-container');
+            if (container) container.style.display = 'none';
+        }
+
 async function exportStructuredZip() {
             logCompliancePreExportReport();
             logToConsole(`Compressing deployment file payload for ${currentLanguage === 'fi' ? 'Finnish (Numeronuotti A)' : 'English'}... Applying DSP transformations where active.`);
             realVorbisEncodedCount = 0;
             wavEncodedCount = 0;
+            const exportBtn = document.getElementById('export-zip-btn');
+            if (exportBtn) exportBtn.disabled = true;
+            showExportProgress();
+            const exportTotalFiles = Object.values(pacenoteWordVariantCounts).reduce((a, b) => a + b, 0)
+                + 1 + brokenEngDuplicateWords.length + impactSpeechFiles.length + gameSpeechFiles.length + numberSpeechFiles.length;
+            let exportFilesDone = 0;
             const zip = new JSZip();
+            try {
             const safeName = sanitizeCodriverNameForFile(codriverName);
             const SOUNDS_FOLDER = getActiveSoundsFolder();
 
@@ -10561,24 +10714,44 @@ async function exportStructuredZip() {
             const iniData = generatePacenoteConfigINI();
             zip.file(`_REFERENCE_ONLY_word_to_file_map_${safeName}.ini`, iniData);
 
+            let variant1FallbackCount = 0;
             for (const base of Object.keys(pacenoteWordVariantCounts)) {
                 const count = pacenoteWordVariantCounts[base];
                 const exportBase = getExportFilenameBase(base);
                 for (let v = 1; v <= count; v++) {
                     const key = `${base}${v}`; // internal key — unchanged, this is how takes are recorded/looked up
-                    let buf = capturedAudioBuffers[key] || fallbackSilence;
+                    // Two-phase recording fallback: an un-recorded variant (v > 1) reuses this
+                    // word's Phase 1 take (variant 1) before falling back to silence, so a
+                    // Phase-1-only export is fully functional — every word is spoken, just
+                    // without variety yet, rather than randomly silent when the plugin picks
+                    // a variant slot that was never recorded.
+                    let buf = capturedAudioBuffers[key];
+                    if (!buf && v > 1 && capturedAudioBuffers[`${base}1`]) {
+                        buf = capturedAudioBuffers[`${base}1`];
+                        variant1FallbackCount++;
+                    }
+                    if (!buf) buf = fallbackSilence;
                     if (buf && useDSPFilterEngine) buf = await applyOfflineFilterBaking(buf);
                     if (buf) {
                         const targetName = `${exportBase}${v}.ogg`;
                         const blob = await encodeAudioBufferForExport(buf, targetName);
                         zip.file(`${SOUNDS_FOLDER}/${targetName}`, blob); // exported filename — corrected to match the real plugin's grammar config
                     }
+                    exportFilesDone++;
+                    if (exportFilesDone % 15 === 0) {
+                        updateExportProgress(exportFilesDone, exportTotalFiles, `Encoding audio… ${exportFilesDone} / ${exportTotalFiles}`);
+                        await new Promise(r => setTimeout(r, 0));
+                    }
                 }
+            }
+            if (variant1FallbackCount > 0) {
+                logToConsole(`${variant1FallbackCount} not-yet-recorded variant(s) filled with their word's Phase 1 take instead of silence — re-export after Phase 2 recording to replace these with real variety.`);
             }
 
             if (fallbackSilence) {
                 const silenceBlob = await encodeAudioBufferForExport(fallbackSilence, SILENCE_FILENAME);
                 zip.file(`${SOUNDS_FOLDER}/${SILENCE_FILENAME}`, silenceBlob);
+                exportFilesDone++;
             }
 
             // Broken/mechanical, Impact, Game, and Number folders are fixed
@@ -10595,7 +10768,10 @@ async function exportStructuredZip() {
                     const blob = await encodeAudioBufferForExport(buf, `${base}.ogg`);
                     zip.file(`Audio/Speech/Broken/Eng/${base}.ogg`, blob);
                 }
+                exportFilesDone++;
             }
+            updateExportProgress(exportFilesDone, exportTotalFiles, `Encoding audio… ${exportFilesDone} / ${exportTotalFiles}`);
+            await new Promise(r => setTimeout(r, 0));
 
             for (const entry of impactSpeechFiles) {
                 let buf = capturedAudioBuffers[entry.file] || fallbackSilence;
@@ -10604,7 +10780,10 @@ async function exportStructuredZip() {
                     const blob = await encodeAudioBufferForExport(buf, entry.file);
                     zip.file(`Audio/Impact/Speech/${entry.file}`, blob);
                 }
+                exportFilesDone++;
             }
+            updateExportProgress(exportFilesDone, exportTotalFiles, `Encoding audio… ${exportFilesDone} / ${exportTotalFiles}`);
+            await new Promise(r => setTimeout(r, 0));
 
             for (const entry of gameSpeechFiles) {
                 let buf = capturedAudioBuffers[entry.file] || fallbackSilence;
@@ -10613,6 +10792,7 @@ async function exportStructuredZip() {
                     const blob = await encodeAudioBufferForExport(buf, entry.file);
                     zip.file(`Audio/Game/${entry.file}`, blob);
                 }
+                exportFilesDone++;
             }
 
             for (const entry of numberSpeechFiles) {
@@ -10622,7 +10802,10 @@ async function exportStructuredZip() {
                     const blob = await encodeAudioBufferForExport(buf, entry.file);
                     zip.file(`Audio/Speech/Number/${entry.file}`, blob);
                 }
+                exportFilesDone++;
             }
+            updateExportProgress(exportFilesDone, exportTotalFiles, `Audio encoding complete (${exportFilesDone} files). Bundling plugin config…`);
+            await new Promise(r => setTimeout(r, 0));
 
             // Config/language bundling confirmed necessary and working via
             // in-game testing — always included now (the temporary toggle
@@ -10730,7 +10913,7 @@ async function exportStructuredZip() {
             zip.file('Plugins/Pacenote/config/pacenotes/packages/Extended.ini', REAL_CATEGORY_PKGEXTENDED_INI);
 
 
-            const appMetadataNote = `Pacenote Recorder Studio v${currentVersion}\nThis tool was built entirely by AI (Claude), based on prompts and direction from the pack's creator.\n`;
+            const appMetadataNote = `Pacenote Recorder Studio v${currentVersion}\n`;
             zip.file("studio_build_notice.txt", appMetadataNote);
 
             zip.file('_HOW_TO_INSTALL.txt',
@@ -10766,11 +10949,23 @@ async function exportStructuredZip() {
 
         A few words in this pack have no recording at all yet (mostly
         language-specific vocabulary the other language doesn't share) and
-        will be silent until recorded — that's a content gap, not a bug.`
+        will be silent until recorded — that's a content gap, not a bug.
+
+        TWO-PHASE RECORDING: this pack was built with a Phase 1/Phase 2
+        workflow. Phase 1 = one take per word, so every word is spoken.
+        Phase 2 = extra takes for words that repeat often, so the same
+        word doesn't sound identical every time. If Phase 2 isn't finished
+        yet, any variant that wasn't recorded reuses that word's Phase 1
+        take instead of being silent${variant1FallbackCount > 0 ? ` (${variant1FallbackCount} file(s) in this export)` : ''} — so this
+        package is fully functional even before Phase 2 is done.`
             );
 
             try {
-                const zipContent = await zip.generateAsync({ type: "blob" });
+                updateExportProgress(exportTotalFiles, exportTotalFiles, 'Compressing package…');
+                await new Promise(r => setTimeout(r, 0));
+                const zipContent = await zip.generateAsync({ type: "blob" }, (metadata) => {
+                    updateExportProgress(metadata.percent, 100, `Compressing package… ${metadata.percent.toFixed(0)}%`);
+                });
                 const url = URL.createObjectURL(zipContent);
                 const a = document.createElement('a'); 
                 a.href = url; 
@@ -10779,6 +10974,7 @@ async function exportStructuredZip() {
                 a.click(); 
                 document.body.removeChild(a); 
                 URL.revokeObjectURL(url);
+                updateExportProgress(1, 1, '✓ Export complete');
                 const totalEncoded = realVorbisEncodedCount + wavEncodedCount;
                 if (realVorbisEncodedCount > 0 && wavEncodedCount === 0) {
                     logToConsole(`Package compiled successfully. All ${realVorbisEncodedCount} .ogg files are real Ogg Vorbis.`);
@@ -10789,6 +10985,14 @@ async function exportStructuredZip() {
                 }
             } catch (e) { 
                 logToConsole(`ZIP Error: ${e.message}`); 
+                updateExportProgress(0, 1, `✗ Export failed: ${e.message}`);
+            }
+            } catch (outerErr) {
+                logToConsole(`Export failed during audio processing: ${outerErr.message}`);
+                updateExportProgress(0, 1, `✗ Export failed: ${outerErr.message}`);
+            } finally {
+                if (exportBtn) exportBtn.disabled = false;
+                setTimeout(hideExportProgress, 2000);
             }
         }
 
