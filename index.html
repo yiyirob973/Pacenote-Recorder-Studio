@@ -2,7 +2,7 @@
 <!--
 
 PACENOTE RECORDER STUDIO - ARCHITECTURE & FUNCTION INDEX
-Version: 3.13.1
+Version: 3.14.0
 
 APP OVERVIEW:
 A browser-based audio engineering suite for the RBR Pacenote Plugin.
@@ -98,7 +98,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         
         .script-arrow {    color: #4a5568;   font-weight: bold;  margin: 0 4px;user-select: none; }
 
-        .grid-container { display: grid; grid-template-columns: 1fr 400px; gap: 20px; }
+        .grid-container { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; }
         .panel { background: #1a202c; padding: 20px; border-radius: 8px; border: 1px solid #2d3748; margin-bottom: 20px; }
         .control-group { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap; }
         .settings-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
@@ -233,7 +233,6 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
             .grid-container { grid-template-columns: 1fr; }
             .control-group { flex-direction: column; align-items: stretch; }
             .control-group > div, .control-group button, .upload-btn { width: 100%; margin-bottom: 5px; }
-            #export-progress-grid { grid-template-columns: 1fr !important; }
             button, .upload-btn, input[type="file"], select, input[type="number"], input[type="range"], input[type="text"] { min-height: 50px; font-size: 1rem; }
             .tab-bar { flex-direction: column; }
             .tab { text-align: center; border-radius: 4px; margin-bottom: 4px; padding: 12px; }
@@ -286,6 +285,18 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         <option value="en" selected>English</option>
         <option value="fi">Finnish (Numeronuotti A) — Beta</option>
     </select>
+</div>
+
+<div class="control-group">
+    <label>🎯 Recording Focus</label>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="action-btn" id="focus-all-btn" onclick="switchRecordingFocusMode('all')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">All Words</button>
+        <button class="action-btn" id="focus-required-btn" onclick="switchRecordingFocusMode('required')" style="font-size:0.75rem; padding:5px 10px; background:#d69e2e;">① Phase 1: Required Only</button>
+        <button class="action-btn" id="focus-remaining-btn" onclick="switchRecordingFocusMode('remaining')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">Phase 2: Remaining Variants</button>
+    </div>
+    <div style="font-size:0.68rem; color:#718096; margin-top:4px;">
+        <strong>Phase 1</strong> = one take per word, plus every impact/game/countdown call — enough for a complete, exportable, functional pack (every word gets spoken; just not varied yet). <strong>Phase 2</strong> = the extra takes for words that repeat often, so the same word doesn't sound identical every time. Export always includes a Phase-2 fallback: any variant you haven't recorded yet reuses your Phase 1 take instead of going silent.
+    </div>
 </div>
 
                 <div class="tab-bar">
@@ -387,42 +398,29 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
                     <span><span style="display:inline-block; width:10px; height:10px; background:#dd6b20; border-radius:2px; margin-right:4px;"></span>Impact (Audio/Impact/Speech)</span>
                     <span><span style="display:inline-block; width:10px; height:10px; background:#d69e2e; border-radius:2px; margin-right:4px;"></span>Go / Start countdown</span>
                 </div>
-                <div class="control-group" id="export-progress-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 20px;">
-                    <div>
-                        <button class="action-btn" id="export-zip-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
-                        <div style="font-size:0.68rem; color:#718096; margin-top:4px; text-align:center;">Encodes real Ogg Vorbis where possible (falls back to WAV-with-.ogg-extension automatically if unavailable) — see the export log and _HOW_TO_INSTALL.txt for what this run actually produced.</div>
-                        <div class="progress-container" id="export-progress-container" style="height:20px; margin-top:8px; display:none;">
-                            <div class="progress-bar" id="export-progress-bar" style="background:#9f7aea;"></div>
-                            <div class="progress-text" id="export-progress-text">Preparing export…</div>
-                        </div>
+                <div class="control-group" id="export-progress-grid" style="display:block;">
+                    <div class="progress-container" style="margin-bottom:4px;">
+                        <div class="progress-bar" id="master-progress"></div>
+                        <div class="progress-text" id="master-progress-text">0 / -- Total Files Captured (0%)</div>
                     </div>
-                    <div>
-                        <div class="progress-container" style="margin-top: auto; margin-bottom: auto;">
-                            <div class="progress-bar" id="master-progress"></div>
-                            <div class="progress-text" id="master-progress-text">0 / -- Total Files Captured (0%)</div>
-                        </div>
-                        <div id="bonus-progress-text" style="font-size:0.75rem; color:#a0aec0; text-align:center; margin-top:2px;"></div>
-                        <div id="compliance-summary" style="font-size:0.75rem; text-align:center; margin-top:4px;"></div>
+                    <div id="bonus-progress-text" style="font-size:0.75rem; color:#a0aec0; text-align:center; margin-top:2px;"></div>
+                    <div id="compliance-summary" style="font-size:0.75rem; text-align:center; margin-top:4px;"></div>
 
-                        <div style="margin-top:12px; display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
-                            <button class="action-btn" id="focus-all-btn" onclick="switchRecordingFocusMode('all')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">All Words</button>
-                            <button class="action-btn" id="focus-required-btn" onclick="switchRecordingFocusMode('required')" style="font-size:0.75rem; padding:5px 10px; background:#d69e2e;">① Phase 1: Required Only</button>
-                            <button class="action-btn" id="focus-remaining-btn" onclick="switchRecordingFocusMode('remaining')" style="font-size:0.75rem; padding:5px 10px; background:#4a5568;">Phase 2: Remaining Variants</button>
-                        </div>
-                        <div style="font-size:0.68rem; color:#718096; text-align:center; margin-top:4px;">
-                            <strong>Phase 1</strong> = one take per word, plus every impact/game/countdown call — enough for a complete, exportable, functional pack (every word gets spoken; just not varied yet). <strong>Phase 2</strong> = the extra takes for words that repeat often, so the same word doesn't sound identical every time. Export always includes a Phase-2 fallback: any variant you haven't recorded yet reuses your Phase 1 take instead of going silent.
-                        </div>
-
-                        <div class="progress-container" style="height:14px; margin-top:10px;">
-                            <div class="progress-bar" id="phase1-progress" style="background:#d69e2e;"></div>
-                            <div class="progress-text" id="phase1-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 1: 0 / --</div>
-                        </div>
-                        <div class="progress-container" style="height:14px; margin-top:4px;">
-                            <div class="progress-bar" id="phase2-progress" style="background:#63b3ed;"></div>
-                            <div class="progress-text" id="phase2-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 2: 0 / --</div>
-                        </div>
+                    <div class="progress-container" style="height:14px; margin-top:10px;">
+                        <div class="progress-bar" id="phase1-progress" style="background:#d69e2e;"></div>
+                        <div class="progress-text" id="phase1-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 1: 0 / --</div>
                     </div>
-                </div>
+                    <div class="progress-container" style="height:14px; margin-top:4px; margin-bottom:12px;">
+                        <div class="progress-bar" id="phase2-progress" style="background:#63b3ed;"></div>
+                        <div class="progress-text" id="phase2-progress-text" style="font-size:0.65rem; line-height:14px;">Phase 2: 0 / --</div>
+                    </div>
+
+                    <button class="action-btn" id="export-zip-btn" onclick="exportStructuredZip()" style="font-size: 1.1rem; padding: 12px 24px; width:100%;">📥 Export Plug-and-Play Package (.ZIP)</button>
+                    <div style="font-size:0.68rem; color:#718096; margin-top:4px; text-align:center;">Encodes real Ogg Vorbis where possible (falls back to WAV-with-.ogg-extension automatically if unavailable) — see the export log and _HOW_TO_INSTALL.txt for what this run actually produced.</div>
+                    <div class="progress-container" id="export-progress-container" style="height:20px; margin-top:8px; display:none;">
+                        <div class="progress-bar" id="export-progress-bar" style="background:#9f7aea;"></div>
+                        <div class="progress-text" id="export-progress-text">Preparing export…</div>
+                    </div>
                 </div>
                 <div class="matrix-container">
                     <div class="matrix-grid" id="token-matrix-mesh"></div>
@@ -496,7 +494,7 @@ peak normalization, Web Audio API DSP, IndexedDB storage, and ZIP exports.
         let codriverName = 'My Custom CoDriver';
         let activeProfileName = 'default';
 	let lang = 'en';
-	let currentVersion = "3.13.1";
+	let currentVersion = "3.14.0";
 	
 	
 	document.title = "Pacenote Recorder Studio - v" + currentVersion;
