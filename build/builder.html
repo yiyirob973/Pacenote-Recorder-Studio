@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacenote Recorder Studio — Build Tool</title>
+<style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#1a202c; color:#e2e8f0; max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    p.sub { color:#a0aec0; margin-top:0; }
+    .panel { background:#2d3748; border:1px solid #4a5568; border-radius:8px; padding:20px; margin-bottom:16px; }
+    label { display:block; margin-bottom:8px; font-weight:600; }
+    input[type=file] { display:block; margin-bottom:6px; color:#e2e8f0; }
+    .hint { font-size:0.85rem; color:#a0aec0; margin-bottom: 4px; }
+    .module-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #4a5568; }
+    .module-row:last-child { border-bottom:none; }
+    .module-row .name { font-weight:600; }
+    .module-row .status { font-size:0.8rem; color:#a0aec0; }
+    button { background:#319795; color:white; border:none; padding:12px 20px; border-radius:6px; font-size:1rem; font-weight:600; cursor:pointer; width:100%; }
+    button:disabled { background:#4a5568; cursor:not-allowed; }
+    #log { white-space:pre-wrap; font-family: monospace; font-size:0.85rem; background:#171923; padding:12px; border-radius:6px; max-height:200px; overflow:auto; margin-top:12px; display:none; }
+    .ok { color:#68d391; } .err { color:#fc8181; } .warn { color:#f6e05e; }
+</style>
+</head>
+<body>
+
+<h1>🏗️ Pacenote Recorder Studio — Build Tool</h1>
+<p class="sub">Splices selected language modules into core index.html at build time. English is always included — it's built into core.</p>
+
+<div class="panel">
+    <label for="core-file">1. Core template</label>
+    <div class="hint">The core index.html from /src (English, no language modules).</div>
+    <input type="file" id="core-file" accept=".html">
+</div>
+
+<div class="panel">
+    <label for="module-files">2. Additional language modules to include</label>
+    <div class="hint">Select any of the .module.js files you want bundled in. Leave empty for an English-only build.</div>
+    <input type="file" id="module-files" accept=".js" multiple>
+    <div id="module-list"></div>
+</div>
+
+<div class="panel">
+    <button id="build-btn" disabled>Build index.html</button>
+    <div id="log"></div>
+</div>
+
+<script>
+const MARKER = '/* @LANGUAGE_MODULES_INJECTION_POINT */';
+
+let coreContent = null;
+let moduleFiles = []; // {name, content}
+
+const coreInput = document.getElementById('core-file');
+const moduleInput = document.getElementById('module-files');
+const buildBtn = document.getElementById('build-btn');
+const logEl = document.getElementById('log');
+const moduleListEl = document.getElementById('module-list');
+
+function log(msg, cls) {
+    logEl.style.display = 'block';
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+function readFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+    });
+}
+
+coreInput.addEventListener('change', async () => {
+    const file = coreInput.files[0];
+    if (!file) { coreContent = null; updateBuildButton(); return; }
+    coreContent = await readFile(file);
+    if (!coreContent.includes(MARKER)) {
+        log(`⚠ "${file.name}" doesn't contain the injection marker (${MARKER}). Are you sure this is the core template?`, 'warn');
+    } else {
+        log(`✓ Loaded core: ${file.name} (${coreContent.length.toLocaleString()} bytes)`, 'ok');
+    }
+    updateBuildButton();
+});
+
+moduleInput.addEventListener('change', async () => {
+    moduleFiles = [];
+    moduleListEl.innerHTML = '';
+    for (const file of moduleInput.files) {
+        const content = await readFile(file);
+        moduleFiles.push({ name: file.name, content });
+        const row = document.createElement('div');
+        row.className = 'module-row';
+        row.innerHTML = `<span class="name">${file.name}</span><span class="status">${content.length.toLocaleString()} bytes</span>`;
+        moduleListEl.appendChild(row);
+    }
+    log(moduleFiles.length
+        ? `✓ ${moduleFiles.length} module(s) selected: ${moduleFiles.map(m => m.name).join(', ')}`
+        : 'No additional language modules selected — build will be English-only.', 'ok');
+    updateBuildButton();
+});
+
+function updateBuildButton() {
+    buildBtn.disabled = !coreContent;
+}
+
+buildBtn.addEventListener('click', () => {
+    if (!coreContent) return;
+
+    const markerCount = coreContent.split(MARKER).length - 1;
+    if (markerCount !== 1) {
+        log(`✗ Expected exactly 1 injection marker in core, found ${markerCount}. Aborting build.`, 'err');
+        return;
+    }
+
+    // Sanity check each module before splicing: it should register into
+    // PACENOTE_LANGUAGE_MODULES and not touch anything it shouldn't.
+    let injected = '';
+    for (const mod of moduleFiles) {
+        if (!mod.content.includes('window.PACENOTE_LANGUAGE_MODULES')) {
+            log(`⚠ "${mod.name}" doesn't reference window.PACENOTE_LANGUAGE_MODULES — is this actually a language module?`, 'warn');
+        }
+        injected += `\n// ==== ${mod.name} ====\n` + mod.content + '\n';
+    }
+
+    const built = coreContent.replace(MARKER, injected);
+
+    const blob = new Blob([built], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'index.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    log(`✓ Built index.html — ${built.length.toLocaleString()} bytes, ${moduleFiles.length} language module(s) included. Downloaded.`, 'ok');
+});
+</script>
+
+</body>
+</html>
