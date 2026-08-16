@@ -2,22 +2,42 @@
 
 [Live demo](https://studio.cauch.uk) · [Issues](https://github.com/yiyirob973/Pacenote-Recorder-Studio/issues) · License: MIT
 
-An all-in-one, browser-based audio engineering suite and procedural script engine designed for recording, processing, auditioning, and exporting complete custom co-driver voice packs for Richard Burns Rally (RBR) Pacenote Plugin.
+An all-in-one, browser-based audio engineering suite and procedural script engine designed for recording, processing, auditioning, and exporting complete custom co-driver voice packs for Richard Bu[...]
 
-This README has been updated to reflect recent additions in the single-file client app (index.html): language engine with a Finnish pack, per-profile storage and keys, two-phase recording workflow, real Ogg Vorbis encoding via a WASM encoder with a safe fallback, language-aware export packaging and generated PaceNote.ini, improved DSP preview controls, and additional UI/UX improvements such as normalization progress overlays and richer export progress feedback.
+This README has been updated to reflect recent additions in the single-file client app (index.html): language engine with a Finnish pack, per-profile storage and keys, two-phase recording workflow, re[...]
 
 ## Overview
-Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co-driver voice packs: from rhythmic recording and automated silence slicing to DSP auditioning and plug-and-play package exports. The app is a single-file, client-side web application that runs under a static server (HTTPS or localhost is required for microphone access).
+Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co-driver voice packs: from rhythmic recording and automated silence slicing to DSP auditioning and plug-and-play pack[...]
 
 ## What’s new (high level)
-- Language engine + Finnish pack: live switching between English and a Finnish (Numeronuotti A) pack, with per-fragment Finnish display translations, Finnish-only tooltip definitions, and a real Finnish word manifest bundled in the app.
+- Language engine + Finnish pack: live switching between English and a Finnish (Numeronuotti A) pack, with per-fragment Finnish display translations, Finnish-only tooltip definitions, and a real F[...]
 - Language-aware export packaging: exported ZIPs use a pack folder named after your chosen codriver name and the active language label; PaceNote.ini is generated to point to that folder automatically.
-- Real Ogg Vorbis encoding in-browser: attempts genuine libvorbis encoding using wasm-media-encoders (WASM libvorbis build loaded from unpkg). If the encoder is unavailable, export falls back to the previously-used WAV-with-.ogg-extension method so exports never regress.
-- Two-phase recording workflow: Phase 1 produces one take of every core token (a fully functional exportable pack). Phase 2 adds variant coverage for extra variety. The app uses a single source of truth (isCoreToken()) to mark tokens that count as Phase 1.
+- Real Ogg Vorbis encoding in-browser: attempts genuine libvorbis encoding using wasm-media-encoders (WASM libvorbis build loaded from unpkg). If the encoder is unavailable, export falls back to t[...]
+- Two-phase recording workflow: Phase 1 produces one take of every core token (a fully functional exportable pack). Phase 2 adds variant coverage for extra variety. The app uses a single source of[...]
 - Profiles & per-profile storage: codriver profiles allow storing separate buffer/key namespaces so multiple voice sets can co-exist in the browser IndexedDB.
 - DSP auditioning presets & controls: band-limited radio/intercom simulation with drive (saturation) and bandwidth presets (vintage/modern/aggressive) for realistic previewing.
 - Improved UI & export feedback: normalization progress modal/overlay, export progress bar and master progress metrics, phase progress bars, and matrix grid state colors/quality indicators.
 - Stage Fluidity Playground: construct random pacenote phrases out of recorded tokens to check transition clipping and concatenative behavior.
+
+## Community Language Packs (language-module branch)
+This repository now supports a community-built language-pack workflow. A dedicated branch named `language-module` holds contributed language modules (src/languages/*.module.js). Approved modules in that branch can be "baked" into the single-file app so the main distributed client ships with community language packs included.
+
+Key points
+- Target branch: Open pull requests that add or update language modules against the `language-module` branch. This keeps community contributions isolated for review before inclusion in the shipped client.
+- Module format: Copy `src/languages/_template.module.js` to `src/languages/<lang>.module.js` and fill the required fields (id, label, wordVariantCounts, displayTranslations, atomicWordDefinitions, etc.). The module files are plain JavaScript and are spliced into the app by the build tool (see `build/builder.html`).
+- Collision audit: Run the module collision audit described in `src/languages/README.md` (or the template) to ensure atomic identifier keys don’t collide with core vocabulary or other packs. The build and runtime include checks, but maintainers require a passing audit on review.
+- Audio assets: Language modules provide manifest and metadata only; audio assets themselves are not required in the PR. When a language is approved for inclusion/baking, maintainers may coordinate how audio is collected or bundled. If your language pack uses non-standard filenames, add filename overrides to `EXPORT_FILENAME_OVERRIDES.<langId>` from within the module file.
+
+Contribution checklist (suggested)
+- Add `src/languages/<lang>.module.js` following the `_template.module.js` contract.
+- Provide `label` and `id` (unique language code), and a `soundsFolder` hint if helpful.
+- Include `displayTranslations` for fragment-level UI display and `atomicWordDefinitions` for language-specific tokens.
+- Run any provided QC/audit scripts and note results in your PR description.
+- Add a short README or description in the PR explaining the language, coverage level, and any filename overrides.
+
+Baking into the main app
+- The build tool (`build/builder.html`) splices approved language module files directly into the single-file client by injecting them into the core script block. A maintainer can merge accepted modules from `language-module` into the main branch and run the build step to produce a distributable `index.html` that includes the language resources.
+- If you’d like automated CI that validates and bakes approved language modules into release artifacts, open an issue or pull request and we can draft a workflow to run the builder and produce release artifacts automatically.
 
 ## Quick links
 - Demo: https://studio.cauch.uk
@@ -41,24 +61,24 @@ Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co
 - License
 
 ## Key features
-- Procedural 20-word script engine that balances numeric distances, severities, directions, and connectors into natural reading blocks (deterministic shuffling, category weights, connector placement fixes).
+- Procedural 20-word script engine that balances numeric distances, severities, directions, and connectors into natural reading blocks (deterministic shuffling, category weights, connector placeme[...]
 - Rhythmic beat metronome with adjustable WPM and pre-roll countdown for consistent cadence.
 - File upload for pre-recorded sourcing and live microphone capture with configurable pre-roll.
 - RMS-based silence trimming and slice engine to extract individual pacenote tokens automatically.
 - Peak volume normalization across sessions to equalize loudness; includes a normalization progress overlay during processing.
 - Real-time radio/intercom DSP (bandpass, saturation/drive presets) for auditioning authentic cockpit comms.
 - IndexedDB persistence (RBRStudioDB) for offline session storage and cross-tab recovery — per-profile keys are used so multiple distinct codriver profiles can be stored side-by-side.
-- In-browser ZIP export that produces a plug-and-play directory matching WorkerBee's Pacenote Plugin layout; export packaging is language-aware and the tool now generates PaceNote.ini automatically.
-- In-browser Ogg Vorbis encoding attempted via wasm-media-encoders (WASM libvorbis). Automatic, safe fallback to the established WAV-with-.ogg-extension approach ensures exports still succeed if the encoder fails to load.
+- In-browser ZIP export that produces a plug-and-play directory matching WorkerBee's Pacenote Plugin layout; export packaging is language-aware and the tool now generates PaceNote.ini automaticall[...]
+- In-browser Ogg Vorbis encoding attempted via wasm-media-encoders (WASM libvorbis). Automatic, safe fallback to the established WAV-with-.ogg-extension approach ensures exports still succeed if t[...]
 - Two-phase recording workflow (Phase 1 = core tokens sufficient for a working pack; Phase 2 = additional variants for variety) and recording focus modes (all / required / remaining).
 - Stage Fluidity Playground to audition random pacenote chains for transition testing.
 - Per-token QA & severity markers surfaced in the UI with a severity legend and tooltip definitions.
 
 ## What's new (detailed)
 - Language Engine and Finnish Pack
-  - The app includes a FINNISH_PACK (Numeronuotti A) containing a Finnish file manifest, display translations for identifier fragments, impact/game/number spoken phrases in Finnish, and Finnish-only tooltip definitions.
+  - The app includes a FINNISH_PACK (Numeronuotti A) containing a Finnish file manifest, display translations for identifier fragments, impact/game/number spoken phrases in Finnish, and Finnish-on[...]
   - switchLanguage(lang) toggles active resources (wordVariantCounts, impact/game/number speech files, and display overrides) between English and Finnish at runtime.
-  - Fragment-level translation: formatScriptDisplayWord() centralizes how tokens are shown across scripts, the matrix grid, the Fluidity Playground, and tooltip titles. When Finnish is active, fragments are translated per FINNISH_PACK.displayTranslations.
+  - Fragment-level translation: formatScriptDisplayWord() centralizes how tokens are shown across scripts, the matrix grid, the Fluidity Playground, and tooltip titles. When Finnish is active, fra[...]
   - auditFinnishTranslationCoverage() runs a QC pass on the Finnish manifest and logs coverage gaps to the console.
 
 - Export packaging & PaceNote.ini generation
@@ -67,7 +87,7 @@ Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co
 
 - Real Ogg Vorbis encoding (WASM) + robust fallback
   - The page attempts to load wasm-media-encoders (a WASM libvorbis build) from unpkg and uses encodeAudioBufferForExport() to encode .ogg-targeted files genuinely.
-  - If the encoder isn’t available (no network, loading error, incompatible browser), the exporter falls back to producing WAV files (or using the previous "WAV-with-.ogg-extension" approach when appropriate), ensuring export never fails silently or regresses.
+  - If the encoder isn’t available (no network, loading error, incompatible browser), the exporter falls back to producing WAV files (or using the previous "WAV-with-.ogg-extension" approach when ap[...]
 
 - Per-profile keys & IndexedDB handling
   - profileBufferKey() and profileMetaKey() functions namespace stored buffers and metadata by activeProfileName so multiple distinct profiles can be saved in the same IndexedDB.
@@ -87,7 +107,6 @@ Pacenote Recorder Studio streamlines the end-to-end workflow for creating RBR co
   - Export progress UI shows per-export progress (export-progress-bar), master overall capture progress (master-progress), and phase-specific progress (phase1/phase2 progress bars).
   - Matrix grid rendering includes state colors (recorded/impact/bonus/damage), quality-warning outlines, and an active-target highlight for single-token targeting.
   - Countdown overlay and metronome beat-bar help sync recording cadence.
-  - Stage Fluidity Playground constructs random strings from recorded tokens and provides an audition button.
 
 - Miscellaneous
   - The app ships a SILENCE_FILENAME constant (silence650.ogg) used for padding where necessary.
@@ -156,7 +175,7 @@ If the repo later includes build tooling, follow the project's CONTRIBUTING.md f
 - Autoplay restrictions: browsers may require a user interaction to enable audio playback; ensure you click/initiate before auditioning.
 
 ## Privacy & data handling
-- Local-first: Recordings and session buffers are stored in your browser's IndexedDB database named `RBRStudioDB` by default. By default no audio or project data is uploaded to any external server.
+- Local-first: Recordings and session buffers are stored in your browser's IndexedDB database named `RBRStudioDB` by default. By default no audio or project data is uploaded to any external serve[...]
 - Per-profile storage: multiple codriver profiles are namespaced within the same DB so different voice sets are isolated by their profile keys.
 - Clearing data:
   - Use the app's "Delete Project" or "Clear Session" UI controls (if available).
@@ -198,16 +217,16 @@ Install steps:
 ## Troubleshooting
 - No microphone found: confirm the browser has permission to access the microphone and that the device is selected in system settings.
 - getUserMedia denied: refresh the page and grant permission, or change site permissions in browser settings.
-- WASM encoder fails to load / encoding falls back: exports will still complete using the safe fallback approach (WAV-with-.ogg-extension or WAV). Check the console for a log about the encoder loading status.
+- WASM encoder fails to load / encoding falls back: exports will still complete using the safe fallback approach (WAV-with-.ogg-extension or WAV). Check the console for a log about the encoder lo[...]
 - Large project fails to save: browser IndexedDB quota may be reached — export your project and clear session data. Different browsers enforce different quotas.
 - Playback stuttering: try a lower buffer size or use a different browser; check CPU usage and close other heavy apps.
 - Exported files not recognized by RBR: make sure the ZIP was extracted to the correct Plugins/Pacenote/ path and PaceNote.ini points to the codriver folder.
 
 ## Technical notes & limitations
 - Storage: Long multi-hour recordings may be large; expect browser-specific storage quotas.
-- Formats: Exports attempt `.ogg` (genuine libvorbis via WASM) and fall back to `.wav` or the WAV-with-.ogg-extension approach for compatibility. Sample rates and bitrates are set to browser defaults unless overridden in advanced settings.
+- Formats: Exports attempt `.ogg` (genuine libvorbis via WASM) and fall back to `.wav` or the WAV-with-.ogg-extension approach for compatibility. Sample rates and bitrates are set to browser defa[...]
 - DSP: Radio/intercom presets are implemented with Web Audio nodes (filter + wave-shaping). Auditioning is approximate and intended for preview; final in-game sound may require fine tuning.
-- Export packaging: Impact/Game/Broken/Number folders are handled consistently with how real RBR packs are structured; only the main sounds folder varies by the pack's codriver name and active language label.
+- Export packaging: Impact/Game/Broken/Number folders are handled consistently with how real RBR packs are structured; only the main sounds folder varies by the pack's codriver name and active la[...]
 
 ## Credits & acknowledgments
 Thanks to the RBR modding and pacenote communities whose terminology, tooling, and plugin formats informed this project.
